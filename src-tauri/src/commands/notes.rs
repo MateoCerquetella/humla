@@ -225,8 +225,7 @@ pub fn notes_move(
     Ok(())
 }
 
-/// Re-date a note (#222), in epoch ms. The title is left alone, even a
-/// timestamp one: the automatic title replaces that anyway.
+/// Set when a note happened, in epoch ms.
 #[tauri::command]
 pub fn notes_set_date(
     state: State<AppState>,

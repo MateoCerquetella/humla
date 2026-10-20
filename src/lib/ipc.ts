@@ -367,7 +367,7 @@ export const ipc = {
   // workspace's default for the next note.
   setNotePrivate: (id: string, isPrivate: boolean) =>
     invoke<void>("notes_set_private", { id, private: isPrivate }),
-  // When the note happened (#222), epoch ms. Leaves the title alone.
+  // When the note happened, epoch ms.
   setNoteDate: (id: string, createdAt: number) =>
     invoke<void>("notes_set_date", { id, createdAt }),
   // Trash (soft-delete) — list / restore / permanently delete.

@@ -513,9 +513,8 @@ pub fn set_note_private(conn: &Connection, id: &str, private: bool) -> Result<()
     Ok(())
 }
 
-/// Set when a note happened (#222) — an imported recording dated by the day it
-/// was imported is the case this exists for. A user's decision, so it bumps
-/// `updated_at` like `set_note_private`.
+/// Set when a note happened. A user's decision, so it bumps `updated_at` like
+/// `set_note_private`: it has to win against a stale copy on another device.
 pub fn set_note_created_at(conn: &Connection, id: &str, created_at: i64) -> Result<()> {
     conn.execute(
         "UPDATE notes SET created_at = ?1, updated_at = ?2 WHERE id = ?3",

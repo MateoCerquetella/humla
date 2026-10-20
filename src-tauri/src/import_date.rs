@@ -11,23 +11,25 @@ const EARLIEST_PLAUSIBLE_MS: i64 = 978_307_200_000;
 const DAY_MS: i64 = 86_400_000;
 const MAC_EPOCH_OFFSET_SECS: u64 = 2_082_844_800;
 
-/// The MP4 movie header's creation time (m4a, mp4, mov — what Voice Memos and
-/// most phones write), else the earliest of the file's own timestamps, since a
-/// copy resets one or the other. `None` when nothing plausible is there.
+/// The earliest plausible of the MP4 movie header's creation time (m4a, mp4,
+/// mov — what Voice Memos and most phones write) and the file's own created
+/// and modified times. Each can be later than the recording — a copy resets
+/// the file times, a converter rewrites the header — but none can be earlier.
 pub fn recording_date(path: &Path, now_ms: i64) -> Option<i64> {
-    let plausible = |ms: i64| (EARLIEST_PLAUSIBLE_MS..=now_ms + DAY_MS).contains(&ms);
-    if let Some(ms) = File::open(path).ok().and_then(|mut f| mvhd_creation_ms(&mut f)) {
-        if plausible(ms) {
-            return Some(ms);
-        }
-    }
-    let meta = std::fs::metadata(path).ok()?;
-    [meta.created().ok(), meta.modified().ok()]
+    let header = File::open(path).ok().and_then(|mut f| mvhd_creation_ms(&mut f));
+    let meta = std::fs::metadata(path).ok();
+    let file_times = [
+        meta.as_ref().and_then(|m| m.created().ok()),
+        meta.as_ref().and_then(|m| m.modified().ok()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|t| t.duration_since(UNIX_EPOCH).ok())
+    .map(|d| d.as_millis() as i64);
+    header
         .into_iter()
-        .flatten()
-        .filter_map(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .filter(|&ms| plausible(ms))
+        .chain(file_times)
+        .filter(|ms| (EARLIEST_PLAUSIBLE_MS..=now_ms + DAY_MS).contains(ms))
         .min()
 }
 
@@ -68,26 +70,26 @@ fn find_box<R: Read + Seek>(r: &mut R, start: u64, end: u64, kind: &[u8; 4]) -> 
         } else if size == 0 {
             size = end - pos;
         }
-        if size < header || pos + size > end {
+        let box_end = pos.checked_add(size)?;
+        if size < header || box_end > end {
             return None;
         }
         if &head[4..] == kind {
             return Some((pos + header, pos + size));
         }
-        pos += size;
+        pos = box_end;
     }
     None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::recording_date;
+    use super::{recording_date, MAC_EPOCH_OFFSET_SECS as MAC_EPOCH_OFFSET};
     use std::fs::File;
     use std::io::Write;
     use std::time::{Duration, UNIX_EPOCH};
 
     const NOW: i64 = 1_790_000_000_000; // 2026-09
-    const MAC_EPOCH_OFFSET: u64 = 2_082_844_800; // 1904-01-01 → 1970-01-01, in seconds
 
     fn mp4_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
         let mut b = ((payload.len() + 8) as u32).to_be_bytes().to_vec();
@@ -155,6 +157,29 @@ mod tests {
 
         let path = write_file(&dir, "talk.mp3", b"ID3\x03\0\0\0\0\0\0", Some(1_570_000_000));
         assert_eq!(recording_date(&path, NOW), Some(1_570_000_000_000));
+    }
+
+    /// A converter writes its own run into the header; a file that kept the
+    /// original's modified time still knows better.
+    #[test]
+    fn an_earlier_file_time_beats_a_converters_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = mp4_box(b"ftyp", b"M4A \0\0\0\0");
+        bytes.extend(mp4_box(b"moov", &mvhd_v0(1_700_000_000)));
+        let path = write_file(&dir, "converted.m4a", &bytes, Some(1_600_000_000));
+        assert_eq!(recording_date(&path, NOW), Some(1_600_000_000_000));
+    }
+
+    /// A corrupt size near `u64::MAX` must end the walk, not wrap past it.
+    #[test]
+    fn survives_a_box_size_that_overflows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = mp4_box(b"ftyp", b"M4A \0\0\0\0");
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        bytes.extend_from_slice(b"free");
+        bytes.extend_from_slice(&u64::MAX.to_be_bytes());
+        let path = write_file(&dir, "corrupt.m4a", &bytes, Some(1_590_000_000));
+        assert_eq!(recording_date(&path, NOW), Some(1_590_000_000_000));
     }
 
     #[test]

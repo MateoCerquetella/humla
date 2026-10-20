@@ -776,13 +776,21 @@ export function Note() {
         d.summary === nextSummary &&
         d.transcript === nextTranscript &&
         d.body === nextBody &&
-        d.title === nextTitle
+        d.title === nextTitle &&
+        d.created_at === note.created_at
       ) {
         return d;
       }
-      return { ...d, summary: nextSummary, transcript: nextTranscript, body: nextBody, title: nextTitle };
+      return {
+        ...d,
+        summary: nextSummary,
+        transcript: nextTranscript,
+        body: nextBody,
+        title: nextTitle,
+        created_at: note.created_at,
+      };
     });
-  }, [note?.transcript, note?.summary, note?.body, note?.title, allowTranscriptSync]);
+  }, [note?.transcript, note?.summary, note?.body, note?.title, note?.created_at, allowTranscriptSync]);
 
   // #90's other half: a note that is typed and never recorded gets its title
   // here, at a body-settled checkpoint. The post-stop recording chain covers
@@ -1285,8 +1293,13 @@ export function Note() {
               if (!draft || readOnly || createdAt === draft.created_at) return;
               const next = { ...draft, created_at: createdAt };
               setDraft(next);
-              await ipc.setNoteDate(draft.id, createdAt);
-              upsert(next);
+              try {
+                await ipc.setNoteDate(draft.id, createdAt);
+                upsert(next);
+              } catch (e) {
+                setDraft((d) => (d ? { ...d, created_at: draft.created_at } : d));
+                useRecordingStore.getState().pushFlash(`Couldn't change the date: ${e}`);
+              }
             }}
           />
           <FolderPicker
@@ -2324,7 +2337,8 @@ function DatePicker({
           onSubmit={(e) => {
             e.preventDefault();
             if (parsed === null) return;
-            onChange(parsed);
+            // The picker has no seconds, so an untouched Save would still move the note.
+            if (input !== toDateTimeLocal(value)) onChange(parsed);
             setOpen(false);
           }}
         >
