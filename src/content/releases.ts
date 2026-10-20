@@ -11,6 +11,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    version: "0.69.2",
+    date: "2026-10-20",
+    title: "Humla works in Claude Code again",
+    summary: "The latest Claude Code connected to Humla but couldn’t see any of its tools. This fixes it.",
+    paragraphs: [
+      "If you search your notes from Claude Code, recent versions of Claude Code showed Humla as connected but found none of its tools, and reconnecting gave an error about missing fields. Claude Code now opens a connection a newer way, and Humla’s server didn’t handle it. 0.69.2 handles both the new way and the old one, so Claude Code, Codex and other clients can search and read your notes again.",
+      "Once you’ve updated, run /mcp in Claude Code and reconnect humla.",
+    ],
+    highlights: [
+      "Humla’s tools show up in Claude Code again.",
+    ],
+    issues: [],
+  },
+  {
     version: "0.69.1",
     date: "2026-10-18",
     title: "Humla opens again",
