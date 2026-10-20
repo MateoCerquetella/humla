@@ -513,6 +513,17 @@ pub fn set_note_private(conn: &Connection, id: &str, private: bool) -> Result<()
     Ok(())
 }
 
+/// Set when a note happened (#222) — an imported recording dated by the day it
+/// was imported is the case this exists for. A user's decision, so it bumps
+/// `updated_at` like `set_note_private`.
+pub fn set_note_created_at(conn: &Connection, id: &str, created_at: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE notes SET created_at = ?1, updated_at = ?2 WHERE id = ?3",
+        params![created_at, now_ms(), id],
+    )?;
+    Ok(())
+}
+
 /// Reassign a note to a different workspace (`""` = Personal/local-only).
 ///
 /// Deliberately does NOT bump `updated_at`: a workspace move is not a content
@@ -3230,6 +3241,22 @@ mod tests {
 
         set_note_private(&conn, &note.id, false).unwrap();
         assert!(!get_note(&conn, &note.id).unwrap().private);
+    }
+
+    /// #222 — moving a note to the day it was actually recorded is a real edit:
+    /// it has to beat a stale copy on another device, so `updated_at` moves too.
+    #[test]
+    fn changing_a_notes_date_is_a_real_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open(&dir.path().join("date.sqlite")).unwrap();
+        let note = create_note(&conn, "en", "meeting", "").unwrap();
+        let recorded = 1_577_869_200_000; // 2020-01-01 09:00 UTC
+
+        set_note_created_at(&conn, &note.id, recorded).unwrap();
+        let after = get_note(&conn, &note.id).unwrap();
+        assert_eq!(after.created_at, recorded);
+        assert!(after.updated_at >= note.updated_at);
+        assert_eq!(after.title, note.title);
     }
 
     /// A folder or client id from the old workspace names nothing in the new

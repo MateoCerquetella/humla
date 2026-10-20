@@ -41,6 +41,8 @@ import { extractSpeakerLabels, renameSpeakerInTranscript } from "../lib/speakers
 import { NEMOTRON_MAX_SPEAKERS } from "../lib/diarizeEngine";
 import { SPEAKER_COUNT_OPTIONS, speakerCountLabel } from "../lib/speakerCount";
 import { htmlToText } from "../lib/noteList";
+import { formatDateChip, fromDateTimeLocal, toDateTimeLocal } from "../lib/noteDate";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/Popover";
 import { shouldAdoptRemoteBody, shouldAdoptRemoteTitle, shouldRequestTitleForBody } from "../lib/noteSync";
 import { SpeakerLabels, speakerColorMap } from "../components/SpeakerLabels";
 import { RecordingSessions } from "../components/RecordingSessions";
@@ -94,16 +96,6 @@ import { cn } from "../lib/cn";
 const Markdown = memo(function Markdown({ source }: { source: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]}>{source}</ReactMarkdown>;
 });
-
-function formatDateChip(ts: number) {
-  const d = new Date(ts);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const start = new Date(d); start.setHours(0, 0, 0, 0);
-  const diff = (today.getTime() - start.getTime()) / 86400000;
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
 
 /** Kick off a summary, surfacing any failure as a toast.
  *
@@ -1285,10 +1277,18 @@ export function Note() {
               }}
             />
           )}
-          <span className="nd-meta">
-            <Calendar size={14} strokeWidth={1.7} />
-            {dateChip}
-          </span>
+          <DatePicker
+            value={draft.created_at}
+            label={dateChip}
+            disabled={readOnly}
+            onChange={async (createdAt) => {
+              if (!draft || readOnly || createdAt === draft.created_at) return;
+              const next = { ...draft, created_at: createdAt };
+              setDraft(next);
+              await ipc.setNoteDate(draft.id, createdAt);
+              upsert(next);
+            }}
+          />
           <FolderPicker
             value={draft.folder_id}
             onChange={async (folderId) => {
@@ -2281,6 +2281,68 @@ function VisibilityPicker({
         </MenuRadioGroup>
       </MenuContent>
     </Menu>
+  );
+}
+
+function DatePicker({
+  value,
+  label,
+  disabled,
+  onChange,
+}: {
+  value: number;
+  label: string;
+  disabled?: boolean;
+  onChange: (createdAt: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState("");
+  const parsed = fromDateTimeLocal(input);
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setInput(toDateTimeLocal(value));
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="nd-meta is-interactive"
+          disabled={disabled}
+          aria-label="Date"
+          title={new Date(value).toLocaleString()}
+        >
+          <Calendar size={14} strokeWidth={1.7} />
+          <span>{label}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="p-3">
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (parsed === null) return;
+            onChange(parsed);
+            setOpen(false);
+          }}
+        >
+          <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
+            When this meeting happened
+            <input
+              type="datetime-local"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              className="text-sm px-3 py-1.5 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors"
+            />
+          </label>
+          <button type="submit" className="nd-btn nd-btn-primary self-end" disabled={parsed === null}>
+            Save
+          </button>
+        </form>
+      </PopoverContent>
+    </Popover>
   );
 }
 

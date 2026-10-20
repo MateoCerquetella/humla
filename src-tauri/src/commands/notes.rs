@@ -225,6 +225,25 @@ pub fn notes_move(
     Ok(())
 }
 
+/// Re-date a note (#222), in epoch ms. The title is left alone, even a
+/// timestamp one: the automatic title replaces that anyway.
+#[tauri::command]
+pub fn notes_set_date(
+    state: State<AppState>,
+    id: String,
+    created_at: i64,
+) -> Result<(), String> {
+    if created_at <= 0 {
+        return Err("That isn't a valid date.".into());
+    }
+    {
+        let conn = state.db.lock();
+        db::set_note_created_at(&conn, &id, created_at).map_err(err)?;
+    }
+    state.sync.note_upserted(&id);
+    Ok(())
+}
+
 /// Move a note to a different workspace (`""` = Personal/local-only). Lets a
 /// note recorded in Personal be shared to a team, or moved between workspaces.
 /// The sync layer tombstones it in the old workspace and recreates it in the new

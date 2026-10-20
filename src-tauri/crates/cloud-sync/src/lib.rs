@@ -1204,7 +1204,7 @@ impl Worker {
                 summary=excluded.summary, summary_preset=excluded.summary_preset,
                 folder_id=excluded.folder_id, client_id=excluded.client_id, language=excluded.language,
                 expected_speakers=excluded.expected_speakers, owner=excluded.owner,
-                private=excluded.private,
+                private=excluded.private, created_at=excluded.created_at,
                 updated_at=excluded.updated_at, deleted_at=NULL
              WHERE excluded.updated_at >= notes.updated_at",
             rusqlite::params![
@@ -2228,6 +2228,35 @@ mod it {
                 == 1
         };
         assert!(is_null, "an empty reference clears the tag");
+    }
+
+    /// #222 — a note re-dated on one device moves on the others too.
+    #[test]
+    fn newer_pull_carries_a_changed_note_date() {
+        let db = test_db();
+        let w = worker(db.clone(), offline_config("wsD"));
+        let note = |created_at, client_updated_at| RemoteNote {
+            client_id: "n1".into(),
+            title: "Imported".into(),
+            created_at,
+            client_updated_at,
+            owner: "u1".into(),
+            ..Default::default()
+        };
+
+        w.apply_remote_note(&note(1_000, 10)).unwrap();
+        w.apply_remote_note(&note(500, 20)).unwrap();
+        assert_eq!(
+            scalar(&db, "SELECT CAST(created_at AS TEXT) FROM notes WHERE id = ?1", "n1").as_deref(),
+            Some("500")
+        );
+
+        // A stale copy doesn't move it back.
+        w.apply_remote_note(&note(1_000, 15)).unwrap();
+        assert_eq!(
+            scalar(&db, "SELECT CAST(created_at AS TEXT) FROM notes WHERE id = ?1", "n1").as_deref(),
+            Some("500")
+        );
     }
 
     /// Session outbox entity_id packing round-trips, and a malformed value
