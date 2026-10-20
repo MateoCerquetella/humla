@@ -27,7 +27,7 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
     Implementation, ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
     ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-    ResourceContents, ServerCapabilities, ServerInfo, Tool,
+    ResourceContents, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::RoleServer;
@@ -138,43 +138,14 @@ fn schema_object(v: &Value) -> Arc<Map<String, Value>> {
 }
 
 impl ServerHandler for HumlaMcp {
-    /// Every protocol version `rmcp` knows EXCEPT `2026-07-28`, which it advertises
-    /// by default and cannot actually serve.
-    ///
-    /// That version's SEP-2549 makes `ttlMs` and `cacheScope` REQUIRED on every
-    /// result, and `rmcp` 3.1.2 declares both as `Option` with
-    /// `skip_serializing_if = "Option::is_none"` — so it omits them and emits a
-    /// `tools/list` that does not satisfy the version it just agreed to. Negotiation
-    /// echoes whatever the client asks for as long as this list contains it, so
-    /// declaring the version was enough to break every client that asks for it:
-    /// Claude Code connected, failed `tools/list` on schema validation, and
-    /// registered ZERO tools while still reporting the server as connected — the
-    /// worst shape of failure, because the static instructions still arrive at
-    /// initialization and the server looks healthy.
-    ///
-    /// `get_info`'s `protocol_version` is NOT the cap — it is only the fallback for a
-    /// client whose request isn't in this list. This is the cap.
-    ///
-    /// Delete this override once `rmcp` serializes those fields; until then a version
-    /// we cannot serve is worse than one we don't offer.
-    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
-        std::borrow::Cow::Owned(
-            ProtocolVersion::KNOWN_VERSIONS
-                .iter()
-                .filter(|v| **v != ProtocolVersion::V_2026_07_28)
-                .cloned()
-                .collect(),
-        )
-    }
-
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         // Resources are declared as well as tools: Claude Code turns them into `@`
         // mentions, and a server that declares none has been reported by Codex as
         // unavailable.
-        ServerInfo::new(
+        ServerConfig::new(
             ServerCapabilities::builder().enable_tools().enable_resources().build(),
         )
-        .with_protocol_version(ProtocolVersion::LATEST)
+        .with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
         .with_server_info(Implementation::new("humla", env!("CARGO_PKG_VERSION")))
         .with_instructions(super::INSTRUCTIONS)
     }
@@ -236,42 +207,89 @@ impl ServerHandler for HumlaMcp {
 mod tests {
     use super::*;
 
-    fn info() -> ServerInfo {
+    fn info() -> ServerConfig {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::db::open(&dir.path().join("t.sqlite")).unwrap();
         HumlaMcp::new(conn).get_info()
     }
 
-    /// A client that asks for `2026-07-28` must be answered with a version we can
-    /// actually serialize. `rmcp` advertises that version by default and then omits
-    /// the `ttlMs` / `cacheScope` its SEP-2549 makes required, so a client validating
-    /// the response registers no tools at all — while still showing the server as
-    /// connected, because the handshake and the instructions both succeed. Shipped
-    /// once (v0.45.0) and reported from a real Claude Code session.
-    #[test]
-    fn the_server_never_agrees_to_a_protocol_version_it_cannot_serialize() {
+    /// Speaks to a server over a pipe, one JSON-RPC line per request, and returns
+    /// the response to each — the shape every stdio client sees.
+    async fn exchange(lines: &[serde_json::Value]) -> Vec<serde_json::Value> {
+        use rmcp::ServiceExt;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::db::open(&dir.path().join("t.sqlite")).unwrap();
-        let supported = HumlaMcp::new(conn).supported_protocol_versions();
-
-        assert!(
-            !supported.contains(&ProtocolVersion::V_2026_07_28),
-            "2026-07-28 requires ttlMs + cacheScope on every result, which rmcp omits"
-        );
-        // …and the versions we DO serve are still offered, or narrowing the list
-        // would have traded one connection failure for another.
-        for v in [
-            ProtocolVersion::V_2025_11_25,
-            ProtocolVersion::V_2025_06_18,
-            ProtocolVersion::V_2025_03_26,
-            ProtocolVersion::V_2024_11_05,
-        ] {
-            assert!(supported.contains(&v), "{v} must stay supported");
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let (server_read, server_write) = tokio::io::split(server);
+        tokio::spawn(async move {
+            if let Ok(s) = HumlaMcp::new(conn).serve((server_read, server_write)).await {
+                let _ = s.waiting().await;
+            }
+        });
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let mut responses = BufReader::new(client_read).lines();
+        let mut out = Vec::new();
+        for line in lines {
+            client_write.write_all(format!("{line}\n").as_bytes()).await.unwrap();
+            if line.get("id").is_some() {
+                let reply = responses.next_line().await.unwrap().unwrap();
+                out.push(serde_json::from_str(&reply).unwrap());
+            }
         }
-        // The fallback for an unknown request has to be one we serve, too.
-        assert!(supported.contains(&HumlaMcp::new(
-            crate::db::open(&dir.path().join("t2.sqlite")).unwrap()
-        ).get_info().protocol_version));
+        out
+    }
+
+    fn inline_meta() -> serde_json::Value {
+        serde_json::json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": { "name": "t", "version": "1" },
+            "io.modelcontextprotocol/clientCapabilities": {}
+        })
+    }
+
+    /// Claude Code opens with `server/discover` and, when that isn't answered the
+    /// way it wants, falls back to `initialize` on the same connection. rmcp 3.1.2
+    /// had already switched the connection to per-request metadata on the
+    /// discover, so every `tools/list` after the fallback was refused and the
+    /// server showed as connected with no tools.
+    #[tokio::test]
+    async fn a_client_that_falls_back_from_discover_to_initialize_gets_the_tools() {
+        let replies = exchange(&[
+            serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "server/discover",
+                "params": { "_meta": inline_meta() } }),
+            serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "initialize",
+                "params": { "protocolVersion": "2025-11-25", "capabilities": {},
+                    "clientInfo": { "name": "t", "version": "1" } } }),
+            serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {} }),
+        ])
+        .await;
+        assert_eq!(replies[1]["result"]["protocolVersion"], "2025-11-25");
+        assert!(
+            replies[2]["result"]["tools"].as_array().is_some_and(|t| !t.is_empty()),
+            "tools/list after the fallback: {}",
+            replies[2]
+        );
+    }
+
+    /// A client that stays on the inline lifecycle sends the metadata on every
+    /// request and must get the tools too, with the cache hints that version
+    /// requires on every result.
+    #[tokio::test]
+    async fn a_client_on_the_inline_lifecycle_gets_the_tools() {
+        let replies = exchange(&[
+            serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "server/discover",
+                "params": { "_meta": inline_meta() } }),
+            serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list",
+                "params": { "_meta": inline_meta() } }),
+        ])
+        .await;
+        assert!(replies[0].get("error").is_none(), "discover: {}", replies[0]);
+        let list = &replies[1]["result"];
+        assert!(list["tools"].as_array().is_some_and(|t| !t.is_empty()), "tools/list: {}", replies[1]);
+        assert!(list.get("ttlMs").is_some() && list.get("cacheScope").is_some(), "cache hints: {list}");
     }
 
     /// Resources are a Claude Code bonus, but declaring the capability is not
