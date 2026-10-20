@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Circle,
   Cloud,
   Copy,
@@ -2417,12 +2418,21 @@ function DatePicker({
           </div>
           <label className="flex items-center justify-between gap-3 text-sm text-[var(--color-text-muted)]">
             Time
-            <input
-              type="time"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              className="w-[96px] text-sm tabular-nums px-2.5 py-1 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors"
-            />
+            <span className="relative">
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="w-[104px] text-sm tabular-nums pl-2.5 pr-8 py-1 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors [&::-webkit-calendar-picker-indicator]:hidden"
+              />
+              {/* WebKit draws no clock of its own and Chromium's can't be styled, so the field carries ours. */}
+              <Clock
+                size={14}
+                strokeWidth={1.7}
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-icon)]"
+              />
+            </span>
           </label>
           <div className="flex justify-end gap-2">
             <button type="button" className="nd-btn" onClick={() => setOpen(false)}>
