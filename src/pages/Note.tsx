@@ -2360,10 +2360,10 @@ function DatePicker({
                 {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
               </span>
               <div className="flex items-center">
-                <button type="button" className="nd-btn-icon-sm" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
+                <button type="button" className="nd-btn-icon nd-btn-icon-sm" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
                   <ChevronLeft size={15} strokeWidth={1.7} />
                 </button>
-                <button type="button" className="nd-btn-icon-sm" aria-label="Next month" onClick={() => shiftMonth(1)}>
+                <button type="button" className="nd-btn-icon nd-btn-icon-sm" aria-label="Next month" onClick={() => shiftMonth(1)}>
                   <ChevronRight size={15} strokeWidth={1.7} />
                 </button>
               </div>
@@ -2389,7 +2389,7 @@ function DatePicker({
                       if (!inMonth) setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
                     }}
                     className={cn(
-                      "h-8 rounded-md text-[13px] tabular-nums transition-colors",
+                      "h-8 rounded-md text-[13px] tabular-nums cursor-pointer transition-colors",
                       selected
                         ? "bg-[var(--color-accent)] text-[var(--color-on-accent)] font-semibold"
                         : "hover:bg-[var(--color-pill-hover)]",
