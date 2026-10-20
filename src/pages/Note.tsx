@@ -2356,7 +2356,7 @@ function DatePicker({
         >
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between pl-1">
-              <span className="text-sm font-medium text-[var(--color-text)]">
+              <span className="block text-sm font-medium text-[var(--color-text)] first-letter:uppercase">
                 {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
               </span>
               <div className="flex items-center">
