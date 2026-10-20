@@ -232,14 +232,24 @@ pub fn notes_set_date(
     id: String,
     created_at: i64,
 ) -> Result<(), String> {
-    if created_at <= 0 {
-        return Err("That isn't a valid date.".into());
-    }
+    check_note_date(created_at, db::now_ms())?;
     {
         let conn = state.db.lock();
         db::set_note_created_at(&conn, &id, created_at).map_err(err)?;
     }
     state.sync.note_upserted(&id);
+    Ok(())
+}
+
+/// A note records something that happened, so it can't be dated after now.
+/// The minute of slack covers the picker's own clock reading a moment earlier.
+fn check_note_date(created_at: i64, now_ms: i64) -> Result<(), String> {
+    if created_at <= 0 {
+        return Err("That isn't a valid date.".into());
+    }
+    if created_at > now_ms + 60_000 {
+        return Err("A note can't be dated in the future.".into());
+    }
     Ok(())
 }
 
@@ -331,7 +341,16 @@ pub fn notes_set_private(
 
 #[cfg(test)]
 mod tests {
-    use super::purge_note_assets;
+    use super::{check_note_date, purge_note_assets};
+
+    #[test]
+    fn a_note_can_be_dated_up_to_now_and_no_later() {
+        let now = 1_790_000_000_000;
+        assert!(check_note_date(now - 86_400_000, now).is_ok());
+        assert!(check_note_date(now, now).is_ok());
+        assert!(check_note_date(now + 61_000, now).is_err());
+        assert!(check_note_date(0, now).is_err());
+    }
     use std::fs;
     use std::io::ErrorKind;
 

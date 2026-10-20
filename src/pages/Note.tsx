@@ -2314,7 +2314,9 @@ function DatePicker({
   const [month, setMonth] = useState(() => startOfDay(value));
   const [time, setTime] = useState("");
   const picked = withTime(day, time);
+  const future = picked !== null && picked > Date.now();
   const today = startOfDay(Date.now());
+  const atThisMonth = new Date(month.getFullYear(), month.getMonth() + 1, 1) > today;
   const grid = monthGrid(month.getFullYear(), month.getMonth());
   // A last week that is all next month is dead height.
   const days = grid[35].getMonth() === month.getMonth() ? grid : grid.slice(0, 35);
@@ -2348,7 +2350,7 @@ function DatePicker({
           className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (picked === null) return;
+            if (picked === null || future) return;
             // The picker has no seconds, so an untouched Save would still move the note.
             if (picked !== withTime(startOfDay(value), toTimeInput(value))) onChange(picked);
             setOpen(false);
@@ -2363,7 +2365,13 @@ function DatePicker({
                 <button type="button" className="nd-btn-icon nd-btn-icon-sm" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
                   <ChevronLeft size={15} strokeWidth={1.7} />
                 </button>
-                <button type="button" className="nd-btn-icon nd-btn-icon-sm" aria-label="Next month" onClick={() => shiftMonth(1)}>
+                <button
+                  type="button"
+                  className={cn("nd-btn-icon nd-btn-icon-sm", atThisMonth && "invisible")}
+                  aria-label="Next month"
+                  disabled={atThisMonth}
+                  onClick={() => shiftMonth(1)}
+                >
                   <ChevronRight size={15} strokeWidth={1.7} />
                 </button>
               </div>
@@ -2378,10 +2386,12 @@ function DatePicker({
                 const selected = d.getTime() === day.getTime();
                 const inMonth = d.getMonth() === month.getMonth();
                 const isToday = d.getTime() === today.getTime();
+                const afterToday = d.getTime() > today.getTime();
                 return (
                   <button
                     key={d.getTime()}
                     type="button"
+                    disabled={afterToday}
                     aria-label={d.toLocaleDateString(undefined, { dateStyle: "full" })}
                     aria-pressed={selected}
                     onClick={() => {
@@ -2389,10 +2399,12 @@ function DatePicker({
                       if (!inMonth) setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
                     }}
                     className={cn(
-                      "h-8 rounded-md text-[13px] tabular-nums cursor-pointer transition-colors",
-                      selected
-                        ? "bg-[var(--color-accent)] text-[var(--color-on-accent)] font-semibold"
-                        : "hover:bg-[var(--color-pill-hover)]",
+                      "h-8 rounded-md text-[13px] tabular-nums transition-colors",
+                      afterToday
+                        ? "opacity-30"
+                        : selected
+                          ? "bg-[var(--color-accent)] text-[var(--color-on-accent)] font-semibold cursor-pointer"
+                          : "hover:bg-[var(--color-pill-hover)] cursor-pointer",
                       !selected && (inMonth ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] opacity-60"),
                       !selected && isToday && "font-semibold text-[var(--color-accent-text)]",
                     )}
@@ -2412,11 +2424,14 @@ function DatePicker({
               className="w-[96px] text-sm tabular-nums px-2.5 py-1 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors"
             />
           </label>
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center justify-end gap-2">
+            {future && (
+              <span className="mr-auto whitespace-nowrap text-xs text-[var(--color-text-muted)]">In the future</span>
+            )}
             <button type="button" className="nd-btn" onClick={() => setOpen(false)}>
               Cancel
             </button>
-            <button type="submit" className="nd-btn nd-btn-primary" disabled={picked === null}>
+            <button type="submit" className="nd-btn nd-btn-primary" disabled={picked === null || future}>
               Save
             </button>
           </div>
