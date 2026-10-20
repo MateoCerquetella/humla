@@ -111,6 +111,9 @@
 .release-preview-page em { font-style: normal; font-size: 10.5px; font-weight: 600; padding-bottom: 2px; border-bottom: 1px solid #dad8d2; }
 .release-preview-page ul { margin: 0; padding-left: 12px; list-style: disc; }
 .release-preview-page-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 7.5px; color: #706e68; }
+.release-preview-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin: 12px 0 14px; }
+.release-preview-days span { display: grid; place-items: center; height: 30px; border-radius: 6px; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--color-text); }
+.release-preview-days span.is-selected { background: var(--color-accent); color: var(--color-on-accent); font-weight: 600; }
 .release-preview-code { display: flex; gap: 6px; margin: 12px 0 14px; }
 .release-preview-code span { display: grid; place-items: center; width: 30px; height: 38px; border: 1px solid var(--color-line-visible); border-radius: 6px; background: var(--color-surface); font-family: var(--font-code); font-size: 16px; color: var(--color-text); }
 .release-preview-code span:last-child { border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }

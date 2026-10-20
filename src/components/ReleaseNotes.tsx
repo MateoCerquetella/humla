@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { ArrowUpRight, Check, ChevronDown, CircleCheck, CircleDot, Building2, FileText, Folder, Languages, Lock, MoreHorizontal, ShieldCheck, Tag, Users, X } from "lucide-react";
+import { ArrowUpRight, Calendar, Check, ChevronDown, CircleCheck, CircleDot, Building2, FileText, Folder, Languages, Lock, MoreHorizontal, ShieldCheck, Tag, Users, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { latestReleases, type Release } from "../content/releases";
@@ -48,6 +48,7 @@ const VISUAL_CAPTION: Record<NonNullable<Release["visual"]>, string> = {
   webhook: "Send a meeting to your own tools.",
   export: "Save a meeting as a PDF.",
   "two-factor": "Sign in with a code from your phone.",
+  date: "Set when a meeting happened.",
 };
 
 function ReleaseVisual({ kind }: { kind: NonNullable<Release["visual"]> }) {
@@ -118,6 +119,15 @@ function ReleaseVisual({ kind }: { kind: NonNullable<Release["visual"]> }) {
           <p className="release-preview-body">Enter the code from your app.</p>
           <div className="release-preview-code">{["4", "8", "2", "9", "1", "7"].map((digit, i) => <span key={i}>{digit}</span>)}</div>
           <div className="release-preview-sent"><ShieldCheck size={14} strokeWidth={1.8} />Signed in with two-factor authentication</div>
+        </>}
+        {kind === "date" && <>
+          <div className="release-demo-heading"><span>Customer kickoff</span></div>
+          <div className="release-preview-meta">
+            <span className="nd-meta is-filled"><Calendar size={14} strokeWidth={1.7} />12 Mar 2024</span>
+            <span className="nd-meta"><Folder size={14} strokeWidth={1.7} />Clients</span>
+          </div>
+          <div className="release-preview-days">{[9, 10, 11, 12, 13, 14, 15].map((day) => <span key={day} className={day === 12 ? "is-selected" : undefined}>{day}</span>)}</div>
+          <div className="release-preview-sent"><CircleCheck size={14} strokeWidth={1.8} />Moved to 12 March 2024</div>
         </>}
         {kind === "speakers" && <>
           <div className="release-demo-heading"><span>Product catch-up</span><small>{speakerCountLabel(PREVIEW_TURNS.length)}</small></div>

@@ -3,13 +3,32 @@ export type Release = {
   date: string;
   title: string;
   summary: string;
-  visual?: "filters" | "privacy" | "activity" | "updates" | "speakers" | "webhook" | "export" | "two-factor";
+  visual?: "filters" | "privacy" | "activity" | "updates" | "speakers" | "webhook" | "export" | "two-factor" | "date";
   paragraphs: string[];
   highlights: string[];
   issues: { title: string; reference: string; status: "Open" | "Closed"; url: string }[];
 };
 
 export const releases: Release[] = [
+  {
+    version: "0.70.0",
+    date: "2026-10-20",
+    title: "Date your notes",
+    summary: "Change when a note happened, and imported recordings keep the day they were made.",
+    visual: "date",
+    paragraphs: [
+      "Click the date under a note’s title to pick the day and time the meeting actually happened. The note moves to its place in your notes right away, and the change syncs to your other Macs and your team. Its title stays as it is.",
+      "Imported recordings now get their date from the file. Humla reads the recording time that phones and Voice Memos save in the file, and otherwise uses the file’s own dates, so a recording from last spring no longer shows up as today’s meeting. Notes you imported before this update keep the import date, so set those by hand.",
+    ],
+    highlights: [
+      "Click the date on a note to change it.",
+      "Imported recordings are dated by when they were recorded.",
+      "Notes can’t be dated in the future.",
+    ],
+    issues: [
+      { title: "Feature request: edit old notes", reference: "#222", status: "Open", url: "https://github.com/michaelwilhelmsen/humla/issues/222" },
+    ],
+  },
   {
     version: "0.69.2",
     date: "2026-10-20",
