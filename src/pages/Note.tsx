@@ -2424,10 +2424,7 @@ function DatePicker({
               className="w-[96px] text-sm tabular-nums px-2.5 py-1 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors"
             />
           </label>
-          <div className="flex items-center justify-end gap-2">
-            {future && (
-              <span className="mr-auto whitespace-nowrap text-xs text-[var(--color-text-muted)]">In the future</span>
-            )}
+          <div className="flex justify-end gap-2">
             <button type="button" className="nd-btn" onClick={() => setOpen(false)}>
               Cancel
             </button>
