@@ -1,19 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { formatDateChip, fromDateTimeLocal, toDateTimeLocal } from "./noteDate";
+import { formatDateChip, monthGrid, toTimeInput, withTime } from "./noteDate";
 
-describe("note date input (#222)", () => {
-  it("writes the note's own local wall-clock time into the picker", () => {
-    const ts = new Date(2023, 2, 7, 9, 5).getTime();
-    expect(toDateTimeLocal(ts)).toBe("2023-03-07T09:05");
+describe("monthGrid", () => {
+  it("lays a month out in six Monday-first weeks", () => {
+    const days = monthGrid(2026, 8); // September 2026 starts on a Tuesday
+    expect(days).toHaveLength(42);
+    expect(days[0]).toEqual(new Date(2026, 7, 31));
+    expect(days[1]).toEqual(new Date(2026, 8, 1));
+    expect(days[41]).toEqual(new Date(2026, 9, 11));
   });
 
-  it("reads the picker back to the same instant", () => {
-    expect(fromDateTimeLocal("2023-03-07T09:05")).toBe(new Date(2023, 2, 7, 9, 5).getTime());
+  it("starts on the first when the month starts on a Monday", () => {
+    expect(monthGrid(2026, 5)[0]).toEqual(new Date(2026, 5, 1)); // June 2026
+  });
+});
+
+describe("note time", () => {
+  it("writes the note's local wall-clock time into the time field", () => {
+    expect(toTimeInput(new Date(2023, 2, 7, 9, 5).getTime())).toBe("09:05");
   });
 
-  it("reads a cleared or malformed picker as nothing", () => {
-    expect(fromDateTimeLocal("")).toBeNull();
-    expect(fromDateTimeLocal("not a date")).toBeNull();
+  it("puts a day and a time back together in local time", () => {
+    expect(withTime(new Date(2023, 2, 7), "14:30")).toBe(new Date(2023, 2, 7, 14, 30).getTime());
+  });
+
+  it("reads a cleared or malformed time as nothing", () => {
+    expect(withTime(new Date(2023, 2, 7), "")).toBeNull();
+    expect(withTime(new Date(2023, 2, 7), "25:00")).toBeNull();
   });
 });
 

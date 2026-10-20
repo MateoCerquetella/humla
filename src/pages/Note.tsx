@@ -12,6 +12,7 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Circle,
   Cloud,
   Copy,
@@ -41,7 +42,7 @@ import { extractSpeakerLabels, renameSpeakerInTranscript } from "../lib/speakers
 import { NEMOTRON_MAX_SPEAKERS } from "../lib/diarizeEngine";
 import { SPEAKER_COUNT_OPTIONS, speakerCountLabel } from "../lib/speakerCount";
 import { htmlToText } from "../lib/noteList";
-import { formatDateChip, fromDateTimeLocal, toDateTimeLocal } from "../lib/noteDate";
+import { formatDateChip, monthGrid, toTimeInput, withTime } from "../lib/noteDate";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/Popover";
 import { shouldAdoptRemoteBody, shouldAdoptRemoteTitle, shouldRequestTitleForBody } from "../lib/noteSync";
 import { SpeakerLabels, speakerColorMap } from "../components/SpeakerLabels";
@@ -2309,13 +2310,24 @@ function DatePicker({
   onChange: (createdAt: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [input, setInput] = useState("");
-  const parsed = fromDateTimeLocal(input);
+  const [day, setDay] = useState(() => startOfDay(value));
+  const [month, setMonth] = useState(() => startOfDay(value));
+  const [time, setTime] = useState("");
+  const picked = withTime(day, time);
+  const today = startOfDay(Date.now());
+  const grid = monthGrid(month.getFullYear(), month.getMonth());
+  // A last week that is all next month is dead height.
+  const days = grid[35].getMonth() === month.getMonth() ? grid : grid.slice(0, 35);
+  const shiftMonth = (by: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + by, 1));
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (next) setInput(toDateTimeLocal(value));
+        if (next) {
+          setDay(startOfDay(value));
+          setMonth(startOfDay(value));
+          setTime(toTimeInput(value));
+        }
         setOpen(next);
       }}
     >
@@ -2331,33 +2343,93 @@ function DatePicker({
           <span>{label}</span>
         </button>
       </PopoverTrigger>
-      <PopoverContent className="p-3">
+      <PopoverContent className="w-[280px] p-4" maxHeight={520}>
         <form
-          className="flex flex-col gap-2"
+          className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (parsed === null) return;
+            if (picked === null) return;
             // The picker has no seconds, so an untouched Save would still move the note.
-            if (input !== toDateTimeLocal(value)) onChange(parsed);
+            if (picked !== withTime(startOfDay(value), toTimeInput(value))) onChange(picked);
             setOpen(false);
           }}
         >
-          <label className="flex flex-col gap-1 text-xs text-[var(--color-text-muted)]">
-            When this meeting happened
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between pl-1">
+              <span className="text-sm font-medium text-[var(--color-text)]">
+                {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+              </span>
+              <div className="flex items-center">
+                <button type="button" className="nd-btn-icon-sm" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
+                  <ChevronLeft size={15} strokeWidth={1.7} />
+                </button>
+                <button type="button" className="nd-btn-icon-sm" aria-label="Next month" onClick={() => shiftMonth(1)}>
+                  <ChevronRight size={15} strokeWidth={1.7} />
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-7 gap-y-0.5 text-center">
+              {days.slice(0, 7).map((d) => (
+                <span key={`h${d.getDay()}`} className="h-7 grid place-items-center text-[11px] text-[var(--color-text-muted)]">
+                  {d.toLocaleDateString(undefined, { weekday: "narrow" })}
+                </span>
+              ))}
+              {days.map((d) => {
+                const selected = d.getTime() === day.getTime();
+                const inMonth = d.getMonth() === month.getMonth();
+                const isToday = d.getTime() === today.getTime();
+                return (
+                  <button
+                    key={d.getTime()}
+                    type="button"
+                    aria-label={d.toLocaleDateString(undefined, { dateStyle: "full" })}
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setDay(d);
+                      if (!inMonth) setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+                    }}
+                    className={cn(
+                      "h-8 rounded-md text-[13px] tabular-nums transition-colors",
+                      selected
+                        ? "bg-[var(--color-accent)] text-[var(--color-on-accent)] font-semibold"
+                        : "hover:bg-[var(--color-pill-hover)]",
+                      !selected && (inMonth ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] opacity-60"),
+                      !selected && isToday && "font-semibold text-[var(--color-accent-text)]",
+                    )}
+                  >
+                    {d.getDate()}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 text-sm text-[var(--color-text-muted)]">
+            Time
             <input
-              type="datetime-local"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              className="text-sm px-3 py-1.5 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors"
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="w-[96px] text-sm tabular-nums px-2.5 py-1 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors"
             />
           </label>
-          <button type="submit" className="nd-btn nd-btn-primary self-end" disabled={parsed === null}>
-            Save
-          </button>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="nd-btn" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="nd-btn nd-btn-primary" disabled={picked === null}>
+              Save
+            </button>
+          </div>
         </form>
       </PopoverContent>
     </Popover>
   );
+}
+
+function startOfDay(ts: number): Date {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 function FolderPicker({
