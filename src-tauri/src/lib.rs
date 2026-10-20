@@ -18,6 +18,7 @@ mod stt;
 mod providers;
 mod chat;
 mod embed;
+mod import_date;
 // Public so the `humla-mcp` binary (#172) can drive it. Everything below it —
 // `db`, `html_text` — stays private to the crate.
 pub mod mcp;
@@ -333,6 +334,7 @@ where
             commands::notes_move,
             commands::notes_set_workspace,
             commands::notes_set_private,
+            commands::notes_set_date,
             commands::notes_list_trash,
             commands::notes_restore,
             commands::notes_purge,

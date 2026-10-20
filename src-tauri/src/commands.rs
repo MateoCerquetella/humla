@@ -3930,6 +3930,10 @@ pub async fn import_audio(
             },
         )
         .map_err(err)?;
+        if let Some(recorded) = crate::import_date::recording_date(&source_path, db::now_ms()) {
+            db::set_note_created_at(&conn, &note.id, recorded).map_err(err)?;
+            note.created_at = recorded;
+        }
         note.title = title;
         note.expected_speakers = expected_speakers;
         note

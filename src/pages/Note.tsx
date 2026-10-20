@@ -12,6 +12,8 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
+  Clock,
   Circle,
   Cloud,
   Copy,
@@ -41,6 +43,8 @@ import { extractSpeakerLabels, renameSpeakerInTranscript } from "../lib/speakers
 import { NEMOTRON_MAX_SPEAKERS } from "../lib/diarizeEngine";
 import { SPEAKER_COUNT_OPTIONS, speakerCountLabel } from "../lib/speakerCount";
 import { htmlToText } from "../lib/noteList";
+import { formatDateChip, monthGrid, toTimeInput, withTime } from "../lib/noteDate";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/Popover";
 import { shouldAdoptRemoteBody, shouldAdoptRemoteTitle, shouldRequestTitleForBody } from "../lib/noteSync";
 import { SpeakerLabels, speakerColorMap } from "../components/SpeakerLabels";
 import { RecordingSessions } from "../components/RecordingSessions";
@@ -94,16 +98,6 @@ import { cn } from "../lib/cn";
 const Markdown = memo(function Markdown({ source }: { source: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]}>{source}</ReactMarkdown>;
 });
-
-function formatDateChip(ts: number) {
-  const d = new Date(ts);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const start = new Date(d); start.setHours(0, 0, 0, 0);
-  const diff = (today.getTime() - start.getTime()) / 86400000;
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
 
 /** Kick off a summary, surfacing any failure as a toast.
  *
@@ -784,13 +778,21 @@ export function Note() {
         d.summary === nextSummary &&
         d.transcript === nextTranscript &&
         d.body === nextBody &&
-        d.title === nextTitle
+        d.title === nextTitle &&
+        d.created_at === note.created_at
       ) {
         return d;
       }
-      return { ...d, summary: nextSummary, transcript: nextTranscript, body: nextBody, title: nextTitle };
+      return {
+        ...d,
+        summary: nextSummary,
+        transcript: nextTranscript,
+        body: nextBody,
+        title: nextTitle,
+        created_at: note.created_at,
+      };
     });
-  }, [note?.transcript, note?.summary, note?.body, note?.title, allowTranscriptSync]);
+  }, [note?.transcript, note?.summary, note?.body, note?.title, note?.created_at, allowTranscriptSync]);
 
   // #90's other half: a note that is typed and never recorded gets its title
   // here, at a body-settled checkpoint. The post-stop recording chain covers
@@ -1285,10 +1287,23 @@ export function Note() {
               }}
             />
           )}
-          <span className="nd-meta">
-            <Calendar size={14} strokeWidth={1.7} />
-            {dateChip}
-          </span>
+          <DatePicker
+            value={draft.created_at}
+            label={dateChip}
+            disabled={readOnly}
+            onChange={async (createdAt) => {
+              if (!draft || readOnly || createdAt === draft.created_at) return;
+              const next = { ...draft, created_at: createdAt };
+              setDraft(next);
+              try {
+                await ipc.setNoteDate(draft.id, createdAt);
+                upsert(next);
+              } catch (e) {
+                setDraft((d) => (d ? { ...d, created_at: draft.created_at } : d));
+                useRecordingStore.getState().pushFlash(`Couldn't change the date: ${e}`);
+              }
+            }}
+          />
           <FolderPicker
             value={draft.folder_id}
             onChange={async (folderId) => {
@@ -2282,6 +2297,161 @@ function VisibilityPicker({
       </MenuContent>
     </Menu>
   );
+}
+
+function DatePicker({
+  value,
+  label,
+  disabled,
+  onChange,
+}: {
+  value: number;
+  label: string;
+  disabled?: boolean;
+  onChange: (createdAt: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [day, setDay] = useState(() => startOfDay(value));
+  const [month, setMonth] = useState(() => startOfDay(value));
+  const [time, setTime] = useState("");
+  const picked = withTime(day, time);
+  const future = picked !== null && picked > Date.now();
+  const today = startOfDay(Date.now());
+  const atThisMonth = new Date(month.getFullYear(), month.getMonth() + 1, 1) > today;
+  const grid = monthGrid(month.getFullYear(), month.getMonth());
+  // A last week that is all next month is dead height.
+  const days = grid[35].getMonth() === month.getMonth() ? grid : grid.slice(0, 35);
+  const shiftMonth = (by: number) => setMonth(new Date(month.getFullYear(), month.getMonth() + by, 1));
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) {
+          setDay(startOfDay(value));
+          setMonth(startOfDay(value));
+          setTime(toTimeInput(value));
+        }
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="nd-meta is-interactive"
+          disabled={disabled}
+          aria-label="Date"
+          title={new Date(value).toLocaleString()}
+        >
+          <Calendar size={14} strokeWidth={1.7} />
+          <span>{label}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[280px] p-4" maxHeight={520}>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (picked === null || future) return;
+            // The picker has no seconds, so an untouched Save would still move the note.
+            if (picked !== withTime(startOfDay(value), toTimeInput(value))) onChange(picked);
+            setOpen(false);
+          }}
+        >
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between pl-1">
+              <span className="block text-sm font-medium text-[var(--color-text)] first-letter:uppercase">
+                {month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+              </span>
+              <div className="flex items-center">
+                <button type="button" className="nd-btn-icon nd-btn-icon-sm" aria-label="Previous month" onClick={() => shiftMonth(-1)}>
+                  <ChevronLeft size={15} strokeWidth={1.7} />
+                </button>
+                <button
+                  type="button"
+                  className={cn("nd-btn-icon nd-btn-icon-sm", atThisMonth && "invisible")}
+                  aria-label="Next month"
+                  disabled={atThisMonth}
+                  onClick={() => shiftMonth(1)}
+                >
+                  <ChevronRight size={15} strokeWidth={1.7} />
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-7 gap-y-0.5 text-center">
+              {days.slice(0, 7).map((d) => (
+                <span key={`h${d.getDay()}`} className="h-7 grid place-items-center text-[11px] text-[var(--color-text-muted)]">
+                  {d.toLocaleDateString(undefined, { weekday: "narrow" })}
+                </span>
+              ))}
+              {days.map((d) => {
+                const selected = d.getTime() === day.getTime();
+                const inMonth = d.getMonth() === month.getMonth();
+                const isToday = d.getTime() === today.getTime();
+                const afterToday = d.getTime() > today.getTime();
+                return (
+                  <button
+                    key={d.getTime()}
+                    type="button"
+                    disabled={afterToday}
+                    aria-label={d.toLocaleDateString(undefined, { dateStyle: "full" })}
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setDay(d);
+                      if (!inMonth) setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+                    }}
+                    className={cn(
+                      "h-8 rounded-md text-[13px] tabular-nums transition-colors",
+                      afterToday
+                        ? "opacity-30"
+                        : selected
+                          ? "bg-[var(--color-accent)] text-[var(--color-on-accent)] font-semibold cursor-pointer"
+                          : "hover:bg-[var(--color-pill-hover)] cursor-pointer",
+                      !selected && (inMonth ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] opacity-60"),
+                      !selected && isToday && "font-semibold text-[var(--color-accent-text)]",
+                    )}
+                  >
+                    {d.getDate()}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <label className="flex items-center justify-between gap-3 text-sm text-[var(--color-text-muted)]">
+            Time
+            <span className="relative">
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="w-[104px] text-sm tabular-nums pl-2.5 pr-8 py-1 rounded-md border border-[var(--color-line-visible)] bg-[var(--color-surface)] text-[var(--color-text)] focus:border-[var(--color-text-muted)] transition-colors [&::-webkit-calendar-picker-indicator]:hidden"
+              />
+              {/* WebKit draws no clock of its own and Chromium's can't be styled, so the field carries ours. */}
+              <Clock
+                size={14}
+                strokeWidth={1.7}
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-icon)]"
+              />
+            </span>
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="nd-btn" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="nd-btn nd-btn-primary" disabled={picked === null || future}>
+              Save
+            </button>
+          </div>
+        </form>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function startOfDay(ts: number): Date {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 function FolderPicker({
