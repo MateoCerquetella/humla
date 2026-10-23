@@ -86,14 +86,14 @@ export type Client = {
 };
 
 // ⋯ → Save audio… (#224): every take's audio joined into one file. Mirrors
-// `AudioFormat` / `NoteAudioInfo` in `commands/export.rs`.
+// `AudioFormat` / `TakeAudio` in `commands/export.rs`.
 export type AudioFormat = "m4a" | "wav";
 
-export type NoteAudioInfo = {
-  // The note's recorded takes, and how many still have audio on this device.
-  takes: number;
-  takesWithAudio: number;
-  durationMs: number;
+// One take as the sheet lists it; `durationMs` is null when its audio is no
+// longer on this device, and the saved file leaves it out.
+export type TakeAudio = {
+  index: number;
+  durationMs: number | null;
 };
 
 // Note export (issue #18). One combined file; content selection + format +
@@ -563,7 +563,7 @@ export const ipc = {
   exportNote: (noteId: string, spec: ExportSpec) =>
     invoke<void>("export_note", { noteId, spec }),
   noteAudioExportInfo: (noteId: string) =>
-    invoke<NoteAudioInfo>("note_audio_export_info", { noteId }),
+    invoke<TakeAudio[]>("note_audio_export_info", { noteId }),
   // Save the note's audio to the path chosen in the native save panel.
   exportNoteAudio: (noteId: string, spec: { path: string; format: AudioFormat }) =>
     invoke<void>("export_note_audio", { noteId, spec }),

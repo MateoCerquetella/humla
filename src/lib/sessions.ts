@@ -15,6 +15,20 @@ export function formatDuration(ms: number): string {
   return `${m}:${ss}`;
 }
 
+/// A length to be read rather than scanned: "54 min 14 s", "4 min", "1 h 2 min".
+/// Seconds go once it passes an hour, where they're noise; a whole number of
+/// minutes doesn't trail a "0 s". For lists (Save audio, #224), where
+/// `formatDuration`'s clock reading would make "4:00" look like a time of day.
+export function formatDurationWords(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`;
+  if (m > 0) return s > 0 ? `${m} min ${s} s` : `${m} min`;
+  return `${s} s`;
+}
+
 /// What a session is called wherever one is named — the reader's divider and
 /// the caption fallback below.
 ///

@@ -474,14 +474,14 @@ function exportCase(): Scenario {
 // before it asks where — all takes there, some gone, none at all — plus the
 // whole note view for the menu item's place beside Export….
 function saveAudioCase(
-  info: { takes: number; takesWithAudio: number; durationMs: number },
+  takes: { index: number; durationMs: number | null }[],
   keepAudio = true,
 ): Scenario {
   const note = makeNote({ id: "n1", title: "Weekly planning" });
   return {
     wrap: (node) => <MemoryRouter>{node}</MemoryRouter>,
     render: () => <SaveAudioModal note={note} open onClose={() => {}} keepAudio={keepAudio} />,
-    ipc: { note_audio_export_info: () => info, export_note_audio: () => undefined },
+    ipc: { note_audio_export_info: () => takes, export_note_audio: () => undefined },
   };
 }
 
@@ -498,7 +498,10 @@ function saveAudioNoteCase(): Scenario {
       notes_list: () => [note],
       notes_get: () => note,
       note_timeline: () => [],
-      note_audio_export_info: () => ({ takes: 2, takesWithAudio: 2, durationMs: 3_725_000 }),
+      note_audio_export_info: () => [
+        { index: 1, durationMs: 3_254_000 },
+        { index: 2, durationMs: 240_000 },
+      ],
     },
   };
 }
@@ -1262,9 +1265,17 @@ const CASES: Record<string, Scenario> = {
   export: exportCase(),
 
   // --- #224: Save audio's sheet, and the ⋯ menu it opens from.
-  "save-audio": saveAudioCase({ takes: 2, takesWithAudio: 2, durationMs: 3_725_000 }),
-  "save-audio-partial": saveAudioCase({ takes: 3, takesWithAudio: 1, durationMs: 1_265_000 }),
-  "save-audio-none": saveAudioCase({ takes: 1, takesWithAudio: 0, durationMs: 0 }, false),
+  "save-audio": saveAudioCase([
+    { index: 1, durationMs: 3_254_000 },
+    { index: 2, durationMs: 240_000 },
+  ]),
+  "save-audio-partial": saveAudioCase([
+    { index: 1, durationMs: 3_254_000 },
+    { index: 2, durationMs: null },
+    { index: 3, durationMs: 240_000 },
+  ]),
+  "save-audio-one": saveAudioCase([{ index: 1, durationMs: 1_265_000 }]),
+  "save-audio-none": saveAudioCase([{ index: 1, durationMs: null }, { index: 2, durationMs: null }], false),
   "save-audio-note": saveAudioNoteCase(),
 
   // --- #147: the issue's exact report — recommended model already pulled.

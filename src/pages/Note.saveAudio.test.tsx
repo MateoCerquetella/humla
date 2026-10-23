@@ -1,25 +1,33 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderApp } from "../test/app";
 import { makeNote } from "../test/fixtures";
 import { mockLayoutBox } from "../test/layout";
 import { useRecordingStore } from "../lib/store";
-import type { NoteAudioInfo } from "../lib/ipc";
+import type { TakeAudio } from "../lib/ipc";
 import type { mockTauri } from "../test/tauri";
 
 // ⋯ → Save audio… (#224): every take's stored audio, joined into one file and
-// saved where the user picks, with the sheet saying what it would save first.
+// saved where the user picks, with the sheet listing what it would save first.
 
 beforeAll(() => mockLayoutBox());
 afterEach(() => {
   useRecordingStore.setState({ errors: [], transcribing: {} });
 });
 
-const ALL_THERE: NoteAudioInfo = { takes: 2, takesWithAudio: 2, durationMs: 3_725_000 };
+const take = (index: number, durationMs: number | null): TakeAudio => ({ index, durationMs });
+const ALL_THERE = [take(1, 3_254_000), take(2, 240_000)];
+
+// Each row of the sheet's list, label then value.
+function rows(dialog: HTMLElement): string[][] {
+  return within(dialog)
+    .getAllByRole("listitem")
+    .map((li) => Array.from(li.children).map((c) => c.textContent ?? ""));
+}
 
 function open(
-  info: NoteAudioInfo = ALL_THERE,
+  info: TakeAudio[] = ALL_THERE,
   handlers: Parameters<typeof mockTauri>[0] = {},
   keepAudio = true,
 ) {
@@ -48,14 +56,18 @@ async function openSheet() {
 }
 
 describe("⋯ → Save audio", () => {
-  it("says what it would save, then saves it as M4A where the panel points", async () => {
+  it("lists what it would save, then saves it as M4A where the panel points", async () => {
     const saved = vi.fn();
     const panel = vi.fn((_args: unknown) => "/Users/me/Weekly planning.m4a");
     open(ALL_THERE, { "plugin:dialog|save": panel, export_note_audio: saved });
 
     const dialog = await openSheet();
     await waitFor(() =>
-      expect(dialog).toHaveTextContent("2 takes, 1:02:05 in all, saved as one file."),
+      expect(rows(dialog)).toEqual([
+        ["Recording 1", "54 min 14 s"],
+        ["Recording 2", "4 min"],
+        ["Total", "58 min 14 s"],
+      ]),
     );
     await userEvent.click(screen.getByRole("button", { name: "Save…" }));
 
@@ -97,28 +109,47 @@ describe("⋯ → Save audio", () => {
     expect(options.defaultPath).toBe("weekly-planning.wav");
   });
 
-  it("says when some takes no longer have their audio", async () => {
-    open({ takes: 3, takesWithAudio: 1, durationMs: 65_000 });
+  it("marks a take whose audio is gone, and still saves the rest", async () => {
+    open([take(1, 3_254_000), take(2, null), take(3, 240_000)]);
     const dialog = await openSheet();
     await waitFor(() =>
-      expect(dialog).toHaveTextContent(
-        "1 of 3 takes still has its audio on this Mac (1:05). The others aren’t stored, so the file leaves them out.",
-      ),
+      expect(rows(dialog)).toEqual([
+        ["Recording 1", "54 min 14 s"],
+        ["Recording 2", "Missing"],
+        ["Recording 3", "4 min"],
+        ["Total", "58 min 14 s"],
+      ]),
     );
     expect(screen.getByRole("button", { name: "Save…" })).toBeInTheDocument();
   });
 
-  it("explains a note with no audio instead of offering to save one", async () => {
-    open({ takes: 1, takesWithAudio: 0, durationMs: 0 }, {}, false);
+  it("lists one take without a total", async () => {
+    open([take(1, 38_000)]);
+    const dialog = await openSheet();
+    await waitFor(() => expect(rows(dialog)).toEqual([["Recording 1", "38 s"]]));
+  });
+
+  it("offers no save when every take's audio is gone, and says how to keep the next", async () => {
+    open([take(1, null), take(2, null)], {}, false);
     const dialog = await openSheet();
     await waitFor(() =>
-      expect(dialog).toHaveTextContent(
-        "Audio isn’t kept on this Mac. Turn on Keep recorded audio in Settings → Recording",
-      ),
+      expect(rows(dialog)).toEqual([
+        ["Recording 1", "Missing"],
+        ["Recording 2", "Missing"],
+      ]),
     );
+    expect(dialog).toHaveTextContent("Turn on Keep recorded audio in Settings → Recording");
     expect(screen.queryByRole("button", { name: "Save…" })).toBeNull();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("says so on a note with nothing recorded", async () => {
+    open([]);
+    const dialog = await openSheet();
+    await waitFor(() => expect(dialog).toHaveTextContent("Nothing has been recorded on this note."));
+    expect(screen.queryByRole("button", { name: "Save…" })).toBeNull();
   });
 
   it("surfaces a failed save as an error", async () => {

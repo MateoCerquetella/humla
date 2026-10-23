@@ -197,40 +197,49 @@ pub struct AudioExportSpec {
     pub format: AudioFormat,
 }
 
-/// What "Save audio…" would save, for its dialog to say before it asks where.
+/// One take as ⋯ → Save audio… lists it before it asks where: its number, and
+/// its length while its audio is still on this device. `None` is a take whose
+/// audio is gone, which the file leaves out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NoteAudioInfo {
-    /// The note's recorded takes.
-    pub takes: usize,
-    /// How many of them still have their audio on this device.
-    pub takes_with_audio: usize,
-    pub duration_ms: u64,
+pub struct TakeAudio {
+    pub index: u32,
+    pub duration_ms: Option<u64>,
 }
 
-/// A note's takes, and the `playback.wav` of each that still has one, in take
-/// order. Index 0 is the "Earlier transcript" repair session, which was never
-/// a take and has no audio, so it isn't counted. `playback.wav` is the file the
-/// player plays: both streams mixed, and the one a take keeps whichever way it
-/// was captured, imported or synced.
-pub(crate) fn note_audio_sources(recordings: &Path) -> (usize, Vec<PathBuf>) {
-    let takes: Vec<PathBuf> = crate::sessions::resolve_sessions(recordings)
+/// A note's takes in order, each with the `playback.wav` it still has and that
+/// file's length. Index 0 is the "Earlier transcript" repair session, which was
+/// never a take and has no audio, so it isn't listed. `playback.wav` is the file
+/// the player plays: both streams mixed, and the one a take keeps whichever way
+/// it was captured, imported or synced. A file the join couldn't copy through
+/// counts as missing, so the list and the saved file always agree.
+fn note_audio_takes(recordings: &Path) -> Vec<(u32, Option<(PathBuf, u64)>)> {
+    crate::sessions::resolve_sessions(recordings)
         .into_iter()
         .filter(|(entry, _)| entry.index > 0)
-        .map(|(_, dir)| dir.join("playback.wav"))
-        .collect();
-    let count = takes.len();
-    (count, takes.into_iter().filter(|p| p.is_file()).collect())
+        .map(|(entry, dir)| {
+            let path = dir.join("playback.wav");
+            let audio = crate::wav::pcm16_mono_16k_data(&path)
+                .ok()
+                .map(|(_, bytes)| (path, bytes / 32));
+            (entry.index, audio)
+        })
+        .collect()
 }
 
-pub(crate) fn note_audio_info(recordings: &Path) -> NoteAudioInfo {
-    let (takes, sources) = note_audio_sources(recordings);
-    let duration_ms = sources
-        .iter()
-        .filter_map(|p| crate::wav::pcm16_mono_16k_data(p).ok())
-        .map(|(_, bytes)| bytes / 32)
-        .sum();
-    NoteAudioInfo { takes, takes_with_audio: sources.len(), duration_ms }
+pub(crate) fn note_audio_info(recordings: &Path) -> Vec<TakeAudio> {
+    note_audio_takes(recordings)
+        .into_iter()
+        .map(|(index, audio)| TakeAudio { index, duration_ms: audio.map(|(_, ms)| ms) })
+        .collect()
+}
+
+/// The files a save joins, in take order.
+pub(crate) fn note_audio_sources(recordings: &Path) -> Vec<PathBuf> {
+    note_audio_takes(recordings)
+        .into_iter()
+        .filter_map(|(_, audio)| audio.map(|(path, _)| path))
+        .collect()
 }
 
 /// A directory under the system temp dir, removed with everything in it when
@@ -286,7 +295,7 @@ fn note_recordings(app: &AppHandle, note_id: &str) -> Result<PathBuf, String> {
 /// What ⋯ → Save audio… would save. `async` + `spawn_blocking` for the same
 /// reason as the save: a synchronous command runs on the main thread.
 #[tauri::command]
-pub async fn note_audio_export_info(app: AppHandle, note_id: String) -> Result<NoteAudioInfo, String> {
+pub async fn note_audio_export_info(app: AppHandle, note_id: String) -> Result<Vec<TakeAudio>, String> {
     let recordings = note_recordings(&app, &note_id)?;
     tauri::async_runtime::spawn_blocking(move || note_audio_info(&recordings))
         .await
@@ -302,7 +311,7 @@ pub async fn note_audio_export_info(app: AppHandle, note_id: String) -> Result<N
 pub async fn export_note_audio(app: AppHandle, note_id: String, spec: AudioExportSpec) -> Result<(), String> {
     let recordings = note_recordings(&app, &note_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let (_, sources) = note_audio_sources(&recordings);
+        let sources = note_audio_sources(&recordings);
         write_note_audio(&sources, spec.format, Path::new(&spec.path))
     })
     .await
@@ -352,31 +361,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn audio_counts_takes_and_finds_what_is_still_on_disk() {
+    async fn audio_lists_every_take_and_joins_the_ones_still_on_disk() {
         let dir = tempfile::tempdir().unwrap();
         let recordings = recorded_note(dir.path()).await;
-        let (takes, sources) = note_audio_sources(&recordings);
-        assert_eq!(takes, 3, "the repair session is not a take");
-        assert_eq!(
-            sources,
-            vec![recordings.join("first/playback.wav"), recordings.join("third/playback.wav")],
-            "in take order, skipping the take with no audio"
-        );
+        let take = |index, duration_ms| TakeAudio { index, duration_ms };
         assert_eq!(
             note_audio_info(&recordings),
-            NoteAudioInfo { takes: 3, takes_with_audio: 2, duration_ms: 1_500 }
+            vec![take(1, Some(1_000)), take(2, None), take(3, Some(500))],
+            "in take order, the repair session left out, the take with no audio missing"
         );
         assert_eq!(
-            note_audio_info(&dir.path().join("recordings/never-recorded")),
-            NoteAudioInfo { takes: 0, takes_with_audio: 0, duration_ms: 0 }
+            note_audio_sources(&recordings),
+            vec![recordings.join("first/playback.wav"), recordings.join("third/playback.wav")]
         );
+        // A file the join would refuse is missing too, so the list can't
+        // promise a take the save then fails on.
+        std::fs::write(recordings.join("third/playback.wav"), b"not audio").unwrap();
+        assert_eq!(note_audio_info(&recordings)[2], take(3, None));
+        assert_eq!(note_audio_sources(&recordings), vec![recordings.join("first/playback.wav")]);
+        assert!(note_audio_info(&dir.path().join("recordings/never-recorded")).is_empty());
     }
 
     #[tokio::test]
     async fn audio_saves_every_take_as_one_wav() {
         let dir = tempfile::tempdir().unwrap();
         let recordings = recorded_note(dir.path()).await;
-        let (_, sources) = note_audio_sources(&recordings);
+        let sources = note_audio_sources(&recordings);
         let dest = dir.path().join("Weekly sync.wav");
         // Saving over a file the panel already confirmed replacing.
         std::fs::write(&dest, b"old").unwrap();
