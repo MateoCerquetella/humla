@@ -52,6 +52,8 @@ export function mockTauri(
         return { repaired: false, coversTranscript: true };
       case "stored_audio_stats":
         return { notes: 0, files: 0, bytes: 0, noteIds: [] };
+      case "note_audio_export_info":
+        return { takes: 0, takesWithAudio: 0, durationMs: 0 };
       case "chat_get_breadth":
         return "note";
       case "chat_get_owner_filter":

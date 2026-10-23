@@ -124,6 +124,85 @@ pub async fn write_i16_mono_16k(path: &std::path::Path, samples: &[i16]) -> anyh
     Ok(())
 }
 
+/// Where a 16 kHz mono 16-bit PCM WAV keeps its samples: the `data` chunk's
+/// byte offset and its length in whole samples' bytes, clamped to the file as
+/// `read_i16_mono_16k` clamps it. Any other format is refused, because callers
+/// copy these bytes out as they are rather than decoding them.
+pub fn pcm16_mono_16k_data(path: &std::path::Path) -> anyhow::Result<(u64, u64)> {
+    use std::io::{Read, Seek};
+    let mut file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+    let mut head = [0u8; 12];
+    file.read_exact(&mut head)?;
+    if &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
+        anyhow::bail!("not a WAV file");
+    }
+    let mut format_ok = false;
+    let mut at = 12u64;
+    loop {
+        if at + 8 > file_len {
+            anyhow::bail!("no data chunk");
+        }
+        let mut chunk = [0u8; 8];
+        file.read_exact(&mut chunk)?;
+        let size = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as u64;
+        match &chunk[0..4] {
+            b"fmt " if size >= 16 => {
+                let mut fmt = [0u8; 16];
+                file.read_exact(&mut fmt)?;
+                let tag = u16::from_le_bytes([fmt[0], fmt[1]]);
+                let channels = u16::from_le_bytes([fmt[2], fmt[3]]);
+                let rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+                let bits = u16::from_le_bytes([fmt[14], fmt[15]]);
+                // 0xFFFE is WAVE_FORMAT_EXTENSIBLE, which AVAudioFile may write
+                // for the same 16-bit integer samples.
+                format_ok = (tag == 1 || tag == 0xFFFE) && channels == 1 && rate == 16_000 && bits == 16;
+            }
+            b"data" => {
+                if !format_ok {
+                    anyhow::bail!("not 16 kHz mono 16-bit PCM");
+                }
+                let payload = at + 8;
+                return Ok((payload, size.min(file_len - payload) & !1));
+            }
+            _ => {}
+        }
+        at += 8 + size + (size & 1);
+        file.seek(std::io::SeekFrom::Start(at))?;
+    }
+}
+
+/// Join 16 kHz mono 16-bit PCM WAVs end to end into one at `out`, copying
+/// each file's samples through without decoding them, so an hour of audio is
+/// never in memory. Returns the samples written.
+pub fn concat_pcm16_mono_16k(
+    inputs: &[std::path::PathBuf],
+    out: &std::path::Path,
+) -> anyhow::Result<u64> {
+    use std::io::{Read, Seek, Write};
+    let ranges = inputs
+        .iter()
+        .map(|p| pcm16_mono_16k_data(p).map(|r| (p, r)))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let bytes: u64 = ranges.iter().map(|(_, (_, len))| len).sum();
+    // A WAV's sizes are 32-bit: about 37 hours at this rate.
+    if bytes + 36 > u32::MAX as u64 {
+        anyhow::bail!("too much audio for one WAV file");
+    }
+    let mut writer = std::io::BufWriter::new(std::fs::File::create(out)?);
+    writer.write_all(&pcm16_header((bytes / 2) as usize))?;
+    for (path, (offset, len)) in ranges {
+        let mut file = std::fs::File::open(path)?;
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        let copied = std::io::copy(&mut file.take(len), &mut writer)?;
+        if copied != len {
+            anyhow::bail!("{} ended early", path.display());
+        }
+    }
+    writer.into_inner().map_err(|e| e.into_error())?.sync_all()?;
+    Ok(bytes / 2)
+}
+
 /// The 44-byte header of a 16 kHz mono 16-bit PCM WAV of `samples` samples.
 fn pcm16_header(samples: usize) -> Vec<u8> {
     const SAMPLE_RATE: u32 = 16_000;
@@ -217,5 +296,41 @@ mod tests {
         write_i16_mono_16k(&b, &ints).await.unwrap();
         assert!(std::fs::read(&a).unwrap() == std::fs::read(&b).unwrap());
         assert!(read_i16_mono_16k(&b).await.unwrap() == ints);
+    }
+
+    #[tokio::test]
+    async fn joins_takes_end_to_end_as_the_files_hold_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let first: Vec<i16> = (0..70_001).map(|i| (i % 65_536 - 32_768) as i16).collect();
+        let second: Vec<i16> = (0..1_234).map(|i| (i * 7) as i16).collect();
+        let (a, b, out) = (dir.path().join("a.wav"), dir.path().join("b.wav"), dir.path().join("out.wav"));
+        // One as the sidecar writes them, header never finalized, one as
+        // `write_i16_mono_16k` does.
+        let data: Vec<u8> = first.iter().flat_map(|s| s.to_le_bytes()).collect();
+        std::fs::write(&a, sidecar_wav(&data, u32::MAX)).unwrap();
+        write_i16_mono_16k(&b, &second).await.unwrap();
+
+        let written = concat_pcm16_mono_16k(&[a.clone(), b.clone()], &out).unwrap();
+        assert_eq!(written, (first.len() + second.len()) as u64);
+        let joined = read_i16_mono_16k(&out).await.unwrap();
+        assert!(joined == [first, second].concat());
+        // A plain 44-byte header the player and any other app can read.
+        assert_eq!(pcm16_mono_16k_data(&out).unwrap(), (44, written * 2));
+    }
+
+    #[test]
+    fn refuses_to_join_a_wav_of_another_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut stereo = sidecar_wav(&[0; 8], 8);
+        // `fmt ` sits after RIFF/WAVE (12) and the 36-byte JUNK chunk; its
+        // channel count is 2 bytes past its 8-byte header and format tag.
+        let channels = 12 + 36 + 8 + 2;
+        stereo[channels..channels + 2].copy_from_slice(&2u16.to_le_bytes());
+        let path = dir.path().join("stereo.wav");
+        std::fs::write(&path, stereo).unwrap();
+        assert!(pcm16_mono_16k_data(&path).is_err());
+        assert!(concat_pcm16_mono_16k(&[path], &dir.path().join("out.wav")).is_err());
+        std::fs::write(dir.path().join("not.wav"), b"RIFF\0\0\0\0WAVEfmt ").unwrap();
+        assert!(pcm16_mono_16k_data(&dir.path().join("not.wav")).is_err());
     }
 }

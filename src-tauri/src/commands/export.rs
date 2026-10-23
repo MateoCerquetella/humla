@@ -1,6 +1,7 @@
 //! Note export (issue #18). Assembles a note's selected content — summary,
 //! transcript, typed notes — into a single Markdown, plain-text or PDF
-//! document and writes it to a user-chosen path.
+//! document and writes it to a user-chosen path. Also saves a note's stored
+//! audio as one file (#224), every take's `playback.wav` joined in order.
 //!
 //! The path is chosen on the frontend via the dialog plugin's native save
 //! panel and passed in as `spec.path`. Unlike `open_in_finder`, the write is
@@ -12,7 +13,8 @@ use crate::db;
 use crate::export_doc::{self, Block};
 use crate::html_text::html_to_text;
 use crate::AppState;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -178,6 +180,135 @@ pub fn export_note(app: AppHandle, note_id: String, spec: ExportSpec) -> Result<
     Ok(())
 }
 
+/// The file a note's audio is saved as. Mirrors `AudioFormat` in `ipc.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioFormat {
+    Wav,
+    /// AAC, through the `afconvert` every Mac ships: an hour of the 16 kHz
+    /// mono WAV is ~115 MB, which is awkward to mail or upload.
+    M4a,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioExportSpec {
+    pub path: String,
+    pub format: AudioFormat,
+}
+
+/// What "Save audio…" would save, for its dialog to say before it asks where.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteAudioInfo {
+    /// The note's recorded takes.
+    pub takes: usize,
+    /// How many of them still have their audio on this device.
+    pub takes_with_audio: usize,
+    pub duration_ms: u64,
+}
+
+/// A note's takes, and the `playback.wav` of each that still has one, in take
+/// order. Index 0 is the "Earlier transcript" repair session, which was never
+/// a take and has no audio, so it isn't counted. `playback.wav` is the file the
+/// player plays: both streams mixed, and the one a take keeps whichever way it
+/// was captured, imported or synced.
+pub(crate) fn note_audio_sources(recordings: &Path) -> (usize, Vec<PathBuf>) {
+    let takes: Vec<PathBuf> = crate::sessions::resolve_sessions(recordings)
+        .into_iter()
+        .filter(|(entry, _)| entry.index > 0)
+        .map(|(_, dir)| dir.join("playback.wav"))
+        .collect();
+    let count = takes.len();
+    (count, takes.into_iter().filter(|p| p.is_file()).collect())
+}
+
+pub(crate) fn note_audio_info(recordings: &Path) -> NoteAudioInfo {
+    let (takes, sources) = note_audio_sources(recordings);
+    let duration_ms = sources
+        .iter()
+        .filter_map(|p| crate::wav::pcm16_mono_16k_data(p).ok())
+        .map(|(_, bytes)| bytes / 32)
+        .sum();
+    NoteAudioInfo { takes, takes_with_audio: sources.len(), duration_ms }
+}
+
+/// A directory under the system temp dir, removed with everything in it when
+/// dropped, so a failed save leaves nothing behind.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Join `sources` into one file at `dest`. It is built in a scratch dir and
+/// only copied over `dest` once it is whole, so a failure never leaves a
+/// half-written file where the user asked for one.
+pub(crate) fn write_note_audio(sources: &[PathBuf], format: AudioFormat, dest: &Path) -> Result<(), String> {
+    if sources.is_empty() {
+        return Err("This note has no audio stored on this device.".into());
+    }
+    let scratch = Scratch(std::env::temp_dir().join(format!("humla-audio-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir_all(&scratch.0).map_err(|e| format!("prepare audio: {e}"))?;
+    let wav = scratch.0.join("audio.wav");
+    crate::wav::concat_pcm16_mono_16k(sources, &wav).map_err(|e| format!("join audio: {e}"))?;
+    let out = match format {
+        AudioFormat::Wav => wav,
+        AudioFormat::M4a => {
+            let m4a = scratch.0.join("audio.m4a");
+            let result = std::process::Command::new("/usr/bin/afconvert")
+                .args(["-f", "m4af", "-d", "aac"])
+                .arg(&wav)
+                .arg(&m4a)
+                .output()
+                .map_err(|e| format!("convert audio to M4A: {e}"))?;
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                return Err(format!("convert audio to M4A: {}", stderr.trim()));
+            }
+            m4a
+        }
+    };
+    std::fs::copy(&out, dest).map_err(|e| format!("write audio file: {e}"))?;
+    Ok(())
+}
+
+fn note_recordings(app: &AppHandle, note_id: &str) -> Result<PathBuf, String> {
+    if !crate::sessions::is_safe_session_id(note_id) {
+        return Err("unsafe note id".into());
+    }
+    let app_dir = app.path().app_data_dir().map_err(err)?;
+    Ok(crate::sessions::recordings_dir(&app_dir, note_id))
+}
+
+/// What ⋯ → Save audio… would save. `async` + `spawn_blocking` for the same
+/// reason as the save: a synchronous command runs on the main thread.
+#[tauri::command]
+pub async fn note_audio_export_info(app: AppHandle, note_id: String) -> Result<NoteAudioInfo, String> {
+    let recordings = note_recordings(&app, &note_id)?;
+    tauri::async_runtime::spawn_blocking(move || note_audio_info(&recordings))
+        .await
+        .map_err(|e| format!("audio info task failed: {e}"))
+}
+
+/// Save a note's audio to the path chosen in the native save panel. Like
+/// `export_note`, the destination is not constrained to the app data dir.
+///
+/// This writes no audio Humla keeps: it copies out what `keep_audio` already
+/// let this device store, at the user's request, to a place the user chose.
+#[tauri::command]
+pub async fn export_note_audio(app: AppHandle, note_id: String, spec: AudioExportSpec) -> Result<(), String> {
+    let recordings = note_recordings(&app, &note_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, sources) = note_audio_sources(&recordings);
+        write_note_audio(&sources, spec.format, Path::new(&spec.path))
+    })
+    .await
+    .map_err(|e| format!("save audio task failed: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +322,82 @@ mod tests {
             include_notes: false,
             include_speaker_labels: true,
         }
+    }
+
+    /// A note's recordings dir holding the repair session (index 0, no audio),
+    /// three takes listed out of order, and the second of them with no audio.
+    async fn recorded_note(dir: &Path) -> PathBuf {
+        let recordings = dir.join("recordings").join("n1");
+        let session = |id: &str, index: u32| crate::sessions::SessionEntry {
+            id: id.into(),
+            index,
+            started_at: String::new(),
+            duration_ms: 0,
+            streams: vec!["mic".into()],
+            transcribed: true,
+        };
+        let manifest = crate::sessions::SessionsManifest {
+            version: 1,
+            sessions: vec![session("third", 3), session("earlier", 0), session("first", 1), session("second", 2)],
+        };
+        crate::sessions::write_manifest(&recordings, &manifest).unwrap();
+        for (id, samples) in [("first", vec![1i16; 16_000]), ("third", vec![3i16; 8_000])] {
+            std::fs::create_dir_all(recordings.join(id)).unwrap();
+            crate::wav::write_i16_mono_16k(&recordings.join(id).join("playback.wav"), &samples)
+                .await
+                .unwrap();
+        }
+        std::fs::create_dir_all(recordings.join("earlier")).unwrap();
+        recordings
+    }
+
+    #[tokio::test]
+    async fn audio_counts_takes_and_finds_what_is_still_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let recordings = recorded_note(dir.path()).await;
+        let (takes, sources) = note_audio_sources(&recordings);
+        assert_eq!(takes, 3, "the repair session is not a take");
+        assert_eq!(
+            sources,
+            vec![recordings.join("first/playback.wav"), recordings.join("third/playback.wav")],
+            "in take order, skipping the take with no audio"
+        );
+        assert_eq!(
+            note_audio_info(&recordings),
+            NoteAudioInfo { takes: 3, takes_with_audio: 2, duration_ms: 1_500 }
+        );
+        assert_eq!(
+            note_audio_info(&dir.path().join("recordings/never-recorded")),
+            NoteAudioInfo { takes: 0, takes_with_audio: 0, duration_ms: 0 }
+        );
+    }
+
+    #[tokio::test]
+    async fn audio_saves_every_take_as_one_wav() {
+        let dir = tempfile::tempdir().unwrap();
+        let recordings = recorded_note(dir.path()).await;
+        let (_, sources) = note_audio_sources(&recordings);
+        let dest = dir.path().join("Weekly sync.wav");
+        // Saving over a file the panel already confirmed replacing.
+        std::fs::write(&dest, b"old").unwrap();
+        write_note_audio(&sources, AudioFormat::Wav, &dest).unwrap();
+        let saved = crate::wav::read_i16_mono_16k(&dest).await.unwrap();
+        assert!(saved == [vec![1i16; 16_000], vec![3i16; 8_000]].concat());
+    }
+
+    #[test]
+    fn audio_save_with_nothing_stored_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out.wav");
+        let e = write_note_audio(&[], AudioFormat::Wav, &dest).unwrap_err();
+        assert!(e.contains("no audio"), "{e}");
+        assert!(!dest.exists());
+        // A source that isn't the format the join copies through fails before
+        // anything reaches the destination.
+        let bad = dir.path().join("bad.wav");
+        std::fs::write(&bad, b"not audio").unwrap();
+        assert!(write_note_audio(&[bad], AudioFormat::Wav, &dest).is_err());
+        assert!(!dest.exists());
     }
 
     #[test]
