@@ -102,7 +102,7 @@ describe("⋯ → Save audio", () => {
     const dialog = await openSheet();
     await waitFor(() =>
       expect(dialog).toHaveTextContent(
-        "1 of 3 takes still has its audio on this Mac (1:05). The others aren't stored, so the file leaves them out.",
+        "1 of 3 takes still has its audio on this Mac (1:05). The others aren’t stored, so the file leaves them out.",
       ),
     );
     expect(screen.getByRole("button", { name: "Save…" })).toBeInTheDocument();
@@ -113,7 +113,7 @@ describe("⋯ → Save audio", () => {
     const dialog = await openSheet();
     await waitFor(() =>
       expect(dialog).toHaveTextContent(
-        "Audio isn't kept on this Mac. Turn on Keep recorded audio in Settings → Recording",
+        "Audio isn’t kept on this Mac. Turn on Keep recorded audio in Settings → Recording",
       ),
     );
     expect(screen.queryByRole("button", { name: "Save…" })).toBeNull();

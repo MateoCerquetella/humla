@@ -38,7 +38,7 @@ function whatItSaves(info: NoteAudioInfo): string {
   // Some takes kept their audio and some didn't.
   return `${info.takesWithAudio} of ${takes(info.takes)} still ${
     info.takesWithAudio === 1 ? "has its" : "have their"
-  } audio on this Mac (${length}). The others aren't stored, so the file leaves them out.`;
+  } audio on this Mac (${length}). The others aren’t stored, so the file leaves them out.`;
 }
 
 export function SaveAudioModal({
@@ -101,7 +101,7 @@ export function SaveAudioModal({
               ? whatItSaves(info)
               : keepAudio
                 ? "No audio is stored for this note."
-                : "Audio isn't kept on this Mac. Turn on Keep recorded audio in Settings → Recording to save it from your next recording."}
+                : "Audio isn’t kept on this Mac. Turn on Keep recorded audio in Settings → Recording to save it from your next recording."}
         </p>
 
         {hasAudio && (
@@ -119,14 +119,19 @@ export function SaveAudioModal({
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-1">
-          <Btn onClick={onClose}>{hasAudio ? "Cancel" : "Close"}</Btn>
-          {hasAudio && (
-            <Btn onClick={onSave} disabled={busy}>
-              {busy ? "Saving…" : "Save…"}
-            </Btn>
-          )}
-        </div>
+        {/* Not until the answer is in: the sheet moves focus to its first
+            control on open, and a lone Close standing in for the row would keep
+            it once Save… and the format appear. */}
+        {info && (
+          <div className="flex justify-end gap-2 pt-1">
+            <Btn onClick={onClose}>{hasAudio ? "Cancel" : "Close"}</Btn>
+            {hasAudio && (
+              <Btn onClick={onSave} disabled={busy}>
+                {busy ? "Saving…" : "Save…"}
+              </Btn>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );
