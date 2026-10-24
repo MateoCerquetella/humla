@@ -413,6 +413,8 @@ where
             commands::note_timeline_delete_chunk,
             commands::open_in_finder,
             commands::export_note,
+            commands::note_audio_export_info,
+            commands::export_note_audio,
             commands::rediarize_note,
             commands::summary_prompts_list,
             commands::summary_prompts_create,

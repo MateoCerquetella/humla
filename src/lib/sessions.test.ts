@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatDuration,
+  formatDurationWords,
   formatSessionCaption,
   groupTimeline,
   needsSessionPull,
@@ -45,6 +46,19 @@ describe("formatDuration", () => {
   });
   it("formats past an hour as h:mm:ss", () => {
     expect(formatDuration(3_661_000)).toBe("1:01:01");
+  });
+});
+
+describe("formatDurationWords", () => {
+  it("reads as minutes and seconds under an hour", () => {
+    expect(formatDurationWords(3_254_000)).toBe("54 min 14 s");
+    expect(formatDurationWords(240_000)).toBe("4 min");
+    expect(formatDurationWords(38_400)).toBe("38 s");
+    expect(formatDurationWords(0)).toBe("0 s");
+  });
+  it("drops the seconds past an hour", () => {
+    expect(formatDurationWords(3_725_000)).toBe("1 h 2 min");
+    expect(formatDurationWords(7_200_000)).toBe("2 h");
   });
 });
 

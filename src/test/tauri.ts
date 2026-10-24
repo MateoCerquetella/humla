@@ -35,6 +35,7 @@ export function mockTauri(
       case "summary_prompts_list":
       case "local_whisper_models":
       case "note_audio_files":
+      case "note_audio_export_info":
       case "note_diagnostics_files":
       case "note_sessions":
       case "notes_with_recordings":

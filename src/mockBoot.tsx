@@ -35,6 +35,7 @@ import { NoteTitleBox, NoteToolbar, PanelEmpty, TranscriptEditor, TranscriptPlay
 import { IntegrationsSection } from "./pages/settings/tabs/Integrations";
 import { SendToWebhookModal } from "./pages/SendToWebhookModal";
 import { ExportModal } from "./pages/ExportModal";
+import { SaveAudioModal } from "./pages/SaveAudioModal";
 import { ChatTab } from "./pages/settings/tabs/Chat";
 import { RecordingSection } from "./pages/settings/tabs/Recording";
 import { TranscriptionTab } from "./pages/settings/tabs/Transcription";
@@ -466,6 +467,42 @@ function exportCase(): Scenario {
       <ExportModal note={note} open onClose={() => {}} onCreateTeam={() => {}} flushEdits={async () => {}} />
     ),
     ipc: { export_note: () => undefined },
+  };
+}
+
+// ---- #224: ⋯ → Save audio…'s sheet, in each of the three things it can say
+// before it asks where — all takes there, some gone, none at all — plus the
+// whole note view for the menu item's place beside Export….
+function saveAudioCase(
+  takes: { index: number; durationMs: number | null }[],
+  keepAudio = true,
+): Scenario {
+  const note = makeNote({ id: "n1", title: "Weekly planning" });
+  return {
+    wrap: (node) => <MemoryRouter>{node}</MemoryRouter>,
+    render: () => <SaveAudioModal note={note} open onClose={() => {}} keepAudio={keepAudio} />,
+    ipc: { note_audio_export_info: () => takes, export_note_audio: () => undefined },
+  };
+}
+
+function saveAudioNoteCase(): Scenario {
+  const note = makeNote({
+    id: "n1",
+    title: "Weekly planning",
+    transcript: "Michael: Shall we go through the launch?\nHege: Yes, I have the notes ready",
+  });
+  return {
+    route: "/note/n1",
+    render: () => null, // unused — `route` renders the app
+    ipc: {
+      notes_list: () => [note],
+      notes_get: () => note,
+      note_timeline: () => [],
+      note_audio_export_info: () => [
+        { index: 1, durationMs: 3_254_000 },
+        { index: 2, durationMs: 240_000 },
+      ],
+    },
   };
 }
 
@@ -1226,6 +1263,20 @@ const CASES: Record<string, Scenario> = {
   "webhook-send": webhookSendCase("hooks.example.com"),
   "webhook-send-unset": webhookSendCase(null),
   export: exportCase(),
+
+  // --- #224: Save audio's sheet, and the ⋯ menu it opens from.
+  "save-audio": saveAudioCase([
+    { index: 1, durationMs: 3_254_000 },
+    { index: 2, durationMs: 240_000 },
+  ]),
+  "save-audio-partial": saveAudioCase([
+    { index: 1, durationMs: 3_254_000 },
+    { index: 2, durationMs: null },
+    { index: 3, durationMs: 240_000 },
+  ]),
+  "save-audio-one": saveAudioCase([{ index: 1, durationMs: 1_265_000 }]),
+  "save-audio-none": saveAudioCase([{ index: 1, durationMs: null }, { index: 2, durationMs: null }], false),
+  "save-audio-note": saveAudioNoteCase(),
 
   // --- #147: the issue's exact report — recommended model already pulled.
   recommended: summaryCase(["gemma4:12b-mlx", "embeddinggemma"]),

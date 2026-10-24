@@ -77,6 +77,7 @@ import { NoteEditor } from "../components/Editor";
 import { ContextMenu, ContextMenuItem } from "../components/ContextMenu";
 import { ExportModal } from "./ExportModal";
 import { SendToWebhookModal } from "./SendToWebhookModal";
+import { SaveAudioModal } from "./SaveAudioModal";
 import { useWebhookSends } from "../lib/webhook";
 import { SUMMARY_PRESETS, presetLabel } from "../lib/presets";
 import { LANGUAGES, languageOptionLabel } from "../lib/languages";
@@ -1962,6 +1963,12 @@ export function NoteToolbar({
   const webhookEnabled = useLiveSetting("webhook_enabled") === "true";
   const sendingToWebhook = useWebhookSends((s) => !!s.sending[noteId]);
   const [webhookOpen, setWebhookOpen] = useState(false);
+  // Save audio (#224) is in this menu for the reason Export is: it is the note
+  // leaving the app. Offered on every note, with the sheet saying why there is
+  // nothing to save, rather than greyed here, where a menu item has no room for
+  // a reason. Disabled while a capture or a replay may still be writing a take.
+  const [audioOpen, setAudioOpen] = useState(false);
+  const keepAudio = useLiveSetting("keep_audio") === "true";
   // The export sheet's team hint opens this. Deliberately NOT the same instance
   // as the read-only banner's in `Note` above: that one rescues the workspace a
   // note already belongs to and only exists when there is one, while the hint
@@ -2119,6 +2126,17 @@ export function NoteToolbar({
               Export…
             </ContextMenuItem>
           )}
+          {note && (
+            <ContextMenuItem
+              disabled={recActive || isTranscribing}
+              onClick={() => {
+                setMenuPos(null);
+                setAudioOpen(true);
+              }}
+            >
+              Save audio…
+            </ContextMenuItem>
+          )}
           {note && webhookEnabled && (
             <ContextMenuItem
               disabled={sendingToWebhook}
@@ -2151,6 +2169,14 @@ export function NoteToolbar({
           onClose={() => setExportOpen(false)}
           flushEdits={flushEdits}
           onCreateTeam={() => setTeamHintOpen(true)}
+        />
+      )}
+      {note && (
+        <SaveAudioModal
+          note={note}
+          open={audioOpen}
+          onClose={() => setAudioOpen(false)}
+          keepAudio={keepAudio}
         />
       )}
       {note && (

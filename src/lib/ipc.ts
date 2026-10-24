@@ -85,6 +85,17 @@ export type Client = {
   updated_at: number;
 };
 
+// ⋯ → Save audio… (#224): every take's audio joined into one file. Mirrors
+// `AudioFormat` / `TakeAudio` in `commands/export.rs`.
+export type AudioFormat = "m4a" | "wav";
+
+// One take as the sheet lists it; `durationMs` is null when its audio is no
+// longer on this device, and the saved file leaves it out.
+export type TakeAudio = {
+  index: number;
+  durationMs: number | null;
+};
+
 // Note export (issue #18). One combined file; content selection + format +
 // speaker-label toggle. Mirrors `ExportFormat` in `commands/export.rs`.
 export type ExportFormat = "markdown" | "txt" | "pdf";
@@ -551,6 +562,11 @@ export const ipc = {
   // Write a note's selected content to the chosen path as one combined file.
   exportNote: (noteId: string, spec: ExportSpec) =>
     invoke<void>("export_note", { noteId, spec }),
+  noteAudioExportInfo: (noteId: string) =>
+    invoke<TakeAudio[]>("note_audio_export_info", { noteId }),
+  // Save the note's audio to the path chosen in the native save panel.
+  exportNoteAudio: (noteId: string, spec: { path: string; format: AudioFormat }) =>
+    invoke<void>("export_note_audio", { noteId, spec }),
   rediarizeNote: (noteId: string) => invoke<void>("rediarize_note", { noteId }),
 
   summaryPromptsList: () => invoke<SummaryPrompt[]>("summary_prompts_list"),

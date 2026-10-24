@@ -22,7 +22,7 @@ const FORMATS: Record<ExportFormat, { label: string; filter: string; extensions:
   pdf: { label: "PDF", filter: "PDF document", extensions: ["pdf"] },
 };
 
-function slug(title: string): string {
+export function slug(title: string): string {
   const s = title
     .toLowerCase()
     .trim()
