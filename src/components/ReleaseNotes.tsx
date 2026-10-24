@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { ArrowUpRight, Calendar, Check, ChevronDown, CircleCheck, CircleDot, Building2, FileText, Folder, Languages, Lock, MoreHorizontal, ShieldCheck, Tag, Users, X } from "lucide-react";
+import { ArrowUpRight, Calendar, Check, ChevronDown, CircleCheck, CircleDot, Building2, FileAudio, FileText, Folder, Languages, Lock, MoreHorizontal, ShieldCheck, Tag, Users, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { latestReleases, type Release } from "../content/releases";
@@ -49,6 +49,7 @@ const VISUAL_CAPTION: Record<NonNullable<Release["visual"]>, string> = {
   export: "Save a meeting as a PDF.",
   "two-factor": "Sign in with a code from your phone.",
   date: "Set when a meeting happened.",
+  audio: "Save a meeting’s recording.",
 };
 
 function ReleaseVisual({ kind }: { kind: NonNullable<Release["visual"]> }) {
@@ -113,6 +114,16 @@ function ReleaseVisual({ kind }: { kind: NonNullable<Release["visual"]> }) {
             <span className="release-preview-page-foot"><span>Weekly planning</span><span>1 / 2</span></span>
           </div>
           <div className="release-preview-sent"><FileText size={14} strokeWidth={1.8} />weekly-planning.pdf</div>
+        </>}
+        {kind === "audio" && <>
+          <div className="release-demo-heading"><span>Save audio</span></div>
+          <ul className="release-preview-takes">
+            <li><span>Recording 1</span><span>32 min 10 s</span></li>
+            <li><span>Recording 2</span><span>18 min 4 s</span></li>
+            <li className="is-total"><span>Total</span><span>50 min 14 s</span></li>
+          </ul>
+          <div className="release-preview-formats"><span className="is-selected">M4A</span><span>WAV</span></div>
+          <div className="release-preview-sent"><FileAudio size={14} strokeWidth={1.8} />weekly-planning.m4a</div>
         </>}
         {kind === "two-factor" && <>
           <div className="release-demo-heading"><span>Two-factor authentication</span></div>

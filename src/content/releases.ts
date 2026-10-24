@@ -3,13 +3,32 @@ export type Release = {
   date: string;
   title: string;
   summary: string;
-  visual?: "filters" | "privacy" | "activity" | "updates" | "speakers" | "webhook" | "export" | "two-factor" | "date";
+  visual?: "filters" | "privacy" | "activity" | "updates" | "speakers" | "webhook" | "export" | "two-factor" | "date" | "audio";
   paragraphs: string[];
   highlights: string[];
   issues: { title: string; reference: string; status: "Open" | "Closed"; url: string }[];
 };
 
 export const releases: Release[] = [
+  {
+    version: "0.71.0",
+    date: "2026-10-24",
+    title: "Save a meeting’s audio",
+    summary: "Save the recording behind a note as one audio file, wherever you want it.",
+    visual: "audio",
+    paragraphs: [
+      "A note’s ⋯ menu now has Save audio…, right below Export…. It lists every recording on the note with its length, then saves them joined in order as one file, as M4A or WAV, wherever you pick. Use it to keep a meeting somewhere else, share it, or open it in another app.",
+      "Humla only has audio to save when Keep recorded audio is on under Settings → Recording. If some of a note’s recordings aren’t stored on this Mac, the list marks them as missing and the file leaves them out.",
+    ],
+    highlights: [
+      "Save a note’s audio from ⋯ → Save audio….",
+      "Choose M4A or WAV.",
+      "Every recording on the note is joined into one file, in order.",
+    ],
+    issues: [
+      { title: "Button for save audio records from note", reference: "#224", status: "Closed", url: "https://github.com/michaelwilhelmsen/humla/issues/224" },
+    ],
+  },
   {
     version: "0.70.0",
     date: "2026-10-20",

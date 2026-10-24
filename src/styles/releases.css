@@ -111,6 +111,11 @@
 .release-preview-page em { font-style: normal; font-size: 10.5px; font-weight: 600; padding-bottom: 2px; border-bottom: 1px solid #dad8d2; }
 .release-preview-page ul { margin: 0; padding-left: 12px; list-style: disc; }
 .release-preview-page-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 7.5px; color: #706e68; }
+.release-preview-takes { display: flex; flex-direction: column; margin: 12px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--color-text); }
+.release-preview-takes li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--color-line); font-variant-numeric: tabular-nums; }
+.release-preview-takes li > span:last-child { color: var(--color-text-muted); }
+.release-preview-takes li.is-total { border-bottom: 0; font-weight: 600; }
+.release-preview-takes li.is-total > span:last-child { color: var(--color-text); }
 .release-preview-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin: 12px 0 14px; }
 .release-preview-days span { display: grid; place-items: center; height: 30px; border-radius: 6px; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--color-text); }
 .release-preview-days span.is-selected { background: var(--color-accent); color: var(--color-on-accent); font-weight: 600; }
