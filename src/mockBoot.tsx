@@ -442,15 +442,19 @@ function IntegrationsHarness({ mcp, webhook }: { mcp: boolean; webhook: boolean 
 
 // ---- #227: the Copilot card's three resting states, and the sign-in code
 // once "Sign in with GitHub" is pressed in the signed-out one.
-function copilotCase(state: "no-cli" | "signed-out" | "signed-in"): Scenario {
+function copilotCase(state: "no-cli" | "broken-cli" | "signed-out" | "signed-in"): Scenario {
   return {
     wrap: settingsWrap,
     render: () => <CopilotHarness />,
     ipc: {
       copilot_status: () => ({
-        login: state === "signed-in" ? "octocat" : null,
+        login: state === "signed-in" || state === "broken-cli" ? "octocat" : null,
         cliPath: state === "no-cli" ? null : "/Users/u/.hermes/node/lib/node_modules/@github/copilot/node_modules/@github/copilot-darwin-arm64/copilot",
-        cliVersion: state === "no-cli" ? null : "1.0.104",
+        cliVersion: state === "no-cli" ? null : state === "broken-cli" ? "0.9.0" : "1.0.104",
+        cliError:
+          state === "broken-cli"
+            ? "Couldn't start the Copilot CLI: protocol version 2 is not in the supported range 3..=3"
+            : null,
         downloadVersion: "1.0.104",
       }),
       copilot_sign_in_start: () => ({
@@ -1305,6 +1309,7 @@ const CASES: Record<string, Scenario> = {
   // --- #213: the webhook rows with a saved endpoint, and the send's confirmation.
   "webhook-settings": integrationsCase(false, true),
   "copilot-no-cli": copilotCase("no-cli"),
+  "copilot-broken-cli": copilotCase("broken-cli"),
   "copilot-signed-out": copilotCase("signed-out"),
   "copilot-signed-in": copilotCase("signed-in"),
   "webhook-send": webhookSendCase("hooks.example.com"),

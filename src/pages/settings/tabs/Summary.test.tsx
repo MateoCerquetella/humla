@@ -92,7 +92,7 @@ describe("SummaryTab on GitHub Copilot", () => {
 
   it("writes the model to copilot_model", async () => {
     mockTauri({
-      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", downloadVersion: "1" }),
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
       copilot_models: () => [
         { id: "auto", name: "Auto", vendor: null },
         { id: "claude-sonnet-5", name: "Claude Sonnet 5", vendor: "Anthropic" },

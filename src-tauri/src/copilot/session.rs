@@ -1,20 +1,24 @@
-//! One completion through the Copilot CLI: the summary, the title, and one step
-//! of chat. Every call is its own SDK session with Humla's system prompt
-//! replacing the CLI's agent prompt and no built-in tool exposed, so the model
-//! is sent the prompt and nothing else. Chat's tools are declared without
-//! handlers: the step ends at the assistant message that requests them, the
-//! session is aborted before the CLI would run anything, and `chat::run_chat`
-//! keeps driving the loop as it does for every provider.
+//! One completion through the Copilot CLI: the summary, the title, and chat.
+//! Every session gets Humla's system prompt in place of the CLI's agent prompt
+//! and no built-in tool, so the model is sent the prompt and nothing else.
+//! Chat's tools are declared without handlers: a step ends at the assistant
+//! message that requests them, `chat::run_chat` runs them as for every
+//! provider, and the next step hands the results back to the same session.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context};
-use github_copilot_sdk::handler::DenyAllHandler;
+use github_copilot_sdk::handler::ApproveAllHandler;
+use github_copilot_sdk::rpc::HandlePendingToolCallRequest;
+use github_copilot_sdk::subscription::EventSubscription;
 use github_copilot_sdk::session_events::{AssistantMessageData, AssistantMessageToolRequest};
 use github_copilot_sdk::rpc::ModelPolicyState;
 use github_copilot_sdk::types::{SessionConfig, SystemMessageConfig};
+use github_copilot_sdk::types::{RequestId, SessionEvent};
+use github_copilot_sdk::session::Session;
 use github_copilot_sdk::{CliProgram, Client, ClientOptions, Tool};
 
 use crate::chat::adapter::{CancelFlag, ChatStep, ChatTurn, ToolCall, ToolSpec};
@@ -33,6 +37,8 @@ pub struct Runtime {
     /// Held across a token refresh: GitHub rotates the refresh token, so a
     /// second refresh with the same one is refused and would sign the user out.
     pub(super) refreshing: tokio::sync::Mutex<()>,
+    /// Why the CLI last failed to start, until it next starts.
+    start_error: parking_lot::Mutex<Option<String>>,
 }
 
 struct Running {
@@ -61,15 +67,25 @@ impl Runtime {
             "--disable-builtin-mcps".into(),
             "--disable-client-telemetry".into(),
         ];
-        let client = Client::start(opts).await.map_err(|e| {
-            anyhow!(
-                "Couldn't start the Copilot CLI: {e}. If it is an older or newer version than \
-                 {}, download the one Humla supports in Settings.",
-                super::cli::VERSION
-            )
-        })?;
+        let client = match Client::start(opts).await {
+            Ok(client) => client,
+            Err(e) => {
+                let message = format!("Couldn't start the Copilot CLI: {e}");
+                *self.start_error.lock() = Some(message.clone());
+                bail!(
+                    "{message}. If it is an older or newer version than {}, download the one \
+                     Humla supports in Settings.",
+                    super::cli::VERSION
+                );
+            }
+        };
+        *self.start_error.lock() = None;
         *running = Some(Running { cli: cli.to_path_buf(), token: token.to_string(), client: client.clone() });
         Ok(client)
+    }
+
+    pub fn start_error(&self) -> Option<String> {
+        self.start_error.lock().clone()
     }
 
     pub async fn stop(&self) {
@@ -186,36 +202,120 @@ enum Delta<'a> {
     Thinking(&'a str),
 }
 
-/// Run one session to its first assistant message that requests tools, or to
-/// its end. `on_delta` returns `false` to stop early.
-async fn run_once(
-    client: &Client,
-    model: &str,
-    system: &str,
-    prompt: &str,
-    tools: Vec<Tool>,
-    mut on_delta: impl FnMut(Delta<'_>) -> bool + Send,
-) -> anyhow::Result<ChatStep> {
-    let mut cfg = SessionConfig::default().with_permission_handler(Arc::new(DenyAllHandler));
-    cfg.streaming = Some(true);
-    cfg.model = Some(model.to_string());
-    cfg.system_message =
-        Some(SystemMessageConfig::new().with_mode("replace").with_content(system));
-    cfg.available_tools = Some(tools.iter().map(|t| t.name.clone()).collect());
-    cfg.tools = (!tools.is_empty()).then_some(tools);
+/// The tool results to answer inside a running turn's session, when `turns`
+/// only adds the assistant's tool calls and their results to the `sent` turns
+/// it already holds. `None` means the session can't continue this history —
+/// the forced wrap-up adds a system turn — and a new one is needed.
+pub fn continuation(turns: &[ChatTurn], sent: usize) -> Option<Vec<(String, String)>> {
+    let added = turns.get(sent..)?;
+    let (first, rest) = added.split_first()?;
+    if first.role != "assistant" || first.tool_calls.is_empty() {
+        return None;
+    }
+    let results: Option<Vec<_>> = rest
+        .iter()
+        .map(|t| if t.role == "tool" { Some((t.tool_call_id.clone()?, t.text.clone())) } else { None })
+        .collect();
+    let results = results?;
+    let answered: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
+    let all_answered = first.tool_calls.iter().all(|c| answered.contains(&c.id.as_str()));
+    (all_answered && !results.is_empty()).then_some(results)
+}
 
-    let session = client
-        .create_session(cfg)
-        .await
-        .map_err(|e| anyhow!("Copilot couldn't start a session: {e}"))?;
-    let mut events = session.subscribe();
-    let id = session.id().clone();
+/// A session and what has been read from it so far.
+struct Live {
+    client: Client,
+    session: Session,
+    events: EventSubscription,
+    /// The tool calls the model asked for, by call id, with the request id the
+    /// CLI awaits an answer under once it has announced one.
+    pending: HashMap<String, Option<RequestId>>,
+    /// How many of the turn's chat turns the session has seen.
+    sent: usize,
+}
 
-    let outcome = async {
-        session.send(prompt).await.map_err(|e| anyhow!("Copilot refused the message: {e}"))?;
+impl Live {
+    async fn open(
+        client: &Client,
+        model: &str,
+        system: &str,
+        tools: Vec<Tool>,
+    ) -> anyhow::Result<Self> {
+        // Custom tools ask permission before the CLI hands them back; no
+        // built-in tool is available to ask.
+        let mut cfg = SessionConfig::default().with_permission_handler(Arc::new(ApproveAllHandler));
+        cfg.streaming = Some(true);
+        cfg.model = Some(model.to_string());
+        cfg.system_message =
+            Some(SystemMessageConfig::new().with_mode("replace").with_content(system));
+        cfg.available_tools = Some(tools.iter().map(|t| t.name.clone()).collect());
+        cfg.tools = (!tools.is_empty()).then_some(tools);
+        let session = client
+            .create_session(cfg)
+            .await
+            .map_err(|e| anyhow!("Copilot couldn't start a session: {e}"))?;
+        let events = session.subscribe();
+        Ok(Live { client: client.clone(), session, events, pending: HashMap::new(), sent: 0 })
+    }
+
+    async fn send(&mut self, prompt: &str) -> anyhow::Result<()> {
+        self.session.send(prompt).await.map_err(|e| anyhow!("Copilot refused the message: {e}"))?;
+        Ok(())
+    }
+
+    async fn next_event(&mut self) -> anyhow::Result<SessionEvent> {
+        self.events.recv().await.map_err(|e| anyhow!("Copilot stopped answering: {e:?}"))
+    }
+
+    /// Note a tool request's id if `ev` announces one.
+    fn note_request(&mut self, ev: &SessionEvent) {
+        if ev.event_type == "external_tool.requested" {
+            let call = ev.data.get("toolCallId").and_then(|v| v.as_str());
+            let request = serde_json::from_value(ev.data["requestId"].clone()).ok();
+            if let (Some(call), Some(request)) = (call, request) {
+                self.pending.insert(call.to_string(), Some(request));
+            }
+        }
+    }
+
+    /// Answer each tool call, waiting for the CLI to announce any it hasn't yet.
+    async fn answer(&mut self, results: Vec<(String, String)>) -> anyhow::Result<()> {
+        for (call_id, text) in results {
+            let request_id = loop {
+                match self.pending.get(&call_id) {
+                    Some(Some(id)) => break id.clone(),
+                    Some(None) => {
+                        let ev = self.next_event().await?;
+                        self.note_request(&ev);
+                    }
+                    None => bail!("Copilot never asked for tool call {call_id}"),
+                }
+            };
+            self.pending.remove(&call_id);
+            self.session
+                .rpc()
+                .tools()
+                .handle_pending_tool_call(HandlePendingToolCallRequest {
+                    request_id,
+                    result: Some(serde_json::Value::String(text)),
+                    error: None,
+                })
+                .await
+                .map_err(|e| anyhow!("Copilot didn't take the tool result: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Read to the next assistant message that requests tools, or to the end
+    /// of the answer. `on_delta` returns `false` to stop early.
+    async fn read_step(
+        &mut self,
+        on_delta: &mut (dyn FnMut(Delta<'_>) -> bool + Send),
+    ) -> anyhow::Result<ChatStep> {
         let mut text = String::new();
         loop {
-            let ev = events.recv().await.map_err(|e| anyhow!("Copilot stopped answering: {e:?}"))?;
+            let ev = self.next_event().await?;
+            self.note_request(&ev);
             let data = &ev.data;
             match ev.event_type.as_str() {
                 "assistant.message_delta" | "assistant.reasoning_delta" => {
@@ -235,6 +335,9 @@ async fn run_once(
                         ev.typed_data().context("Copilot sent a message Humla can't read")?;
                     let requests = msg.tool_requests.unwrap_or_default();
                     if !requests.is_empty() {
+                        for r in &requests {
+                            self.pending.entry(r.tool_call_id.clone()).or_insert(None);
+                        }
                         return Ok(step_from_message(&msg.content, &requests));
                     }
                     text = msg.content;
@@ -244,20 +347,27 @@ async fn run_once(
                     bail!("Copilot: {message}");
                 }
                 "session.idle" => return Ok(ChatStep { text, tool_calls: Vec::new() }),
+                "assistant.usage" => eprintln!(
+                    "[copilot] model={} initiator={} input={} output={} cost={}",
+                    data["model"], data["initiator"], data["inputTokens"], data["outputTokens"], data["cost"]
+                ),
                 _ => {}
             }
         }
-    };
-    let result = tokio::time::timeout(CALL_TIMEOUT, outcome)
-        .await
-        .unwrap_or_else(|_| Err(anyhow!("Copilot took too long to answer.")));
+    }
 
-    // A tool request leaves the session waiting to run it; nothing here
-    // should, and the session has no further use.
-    let _ = session.abort().await;
-    let _ = session.disconnect().await;
-    let _ = client.delete_session(&id).await;
-    result
+    async fn close(self) {
+        let id = self.session.id().clone();
+        let _ = self.session.abort().await;
+        let _ = self.session.disconnect().await;
+        let _ = self.client.delete_session(&id).await;
+    }
+}
+
+async fn within_timeout<T>(work: impl std::future::Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
+    tokio::time::timeout(CALL_TIMEOUT, work)
+        .await
+        .unwrap_or_else(|_| Err(anyhow!("Copilot took too long to answer.")))
 }
 
 /// A summary or a title.
@@ -268,41 +378,101 @@ pub async fn complete(
     user: &str,
     mut on_chunk: impl FnMut(StreamChunk) + Send,
 ) -> anyhow::Result<String> {
-    let step = run_once(client, model, system, user, Vec::new(), |d| {
-        match d {
-            Delta::Content(s) => on_chunk(StreamChunk::Content(s)),
-            Delta::Thinking(s) => on_chunk(StreamChunk::Thinking(s)),
-        }
-        true
+    let mut live = Live::open(client, model, system, Vec::new()).await?;
+    let result = within_timeout(async {
+        live.send(user).await?;
+        live.read_step(&mut |d| {
+            match d {
+                Delta::Content(s) => on_chunk(StreamChunk::Content(s)),
+                Delta::Thinking(s) => on_chunk(StreamChunk::Thinking(s)),
+            }
+            true
+        })
+        .await
     })
-    .await?;
-    if step.text.trim().is_empty() {
+    .await;
+    live.close().await;
+    let text = result?.text;
+    if text.trim().is_empty() {
         bail!("Copilot returned an empty answer.");
     }
-    Ok(step.text)
+    Ok(text)
 }
 
-/// One step of chat.
-pub async fn step(
-    client: &Client,
-    model: &str,
-    turns: &[ChatTurn],
-    tools: &[ToolSpec],
-    cancel: &CancelFlag,
-    mut on_text: impl FnMut(&str) + Send,
-) -> anyhow::Result<ChatStep> {
-    let (system, prompt) = render_prompt(turns);
-    let tools = tools
-        .iter()
-        .map(|t| Tool::new(t.name).with_description(t.description).with_parameters(t.parameters.clone()))
-        .collect();
-    run_once(client, model, &system, &prompt, tools, |d| {
-        if let Delta::Content(s) = d {
-            on_text(s);
+/// One chat turn on Copilot: every step after the first answers the previous
+/// step's tool calls inside the same session, so Copilot counts the follow-up
+/// calls as the agent's rather than as new prompts from the user.
+#[derive(Default)]
+pub struct ChatTurnSession {
+    live: tokio::sync::Mutex<Option<Live>>,
+}
+
+impl ChatTurnSession {
+    pub async fn step(
+        &self,
+        client: &Client,
+        model: &str,
+        turns: &[ChatTurn],
+        tools: &[ToolSpec],
+        cancel: &CancelFlag,
+        on_text: &mut (dyn FnMut(&str) + Send),
+    ) -> anyhow::Result<ChatStep> {
+        let mut slot = self.live.lock().await;
+        let results = slot.as_ref().and_then(|l| continuation(turns, l.sent));
+        let outcome = within_timeout(async {
+            let mut live = match (slot.take(), results) {
+                (Some(mut live), Some(results)) => {
+                    live.answer(results).await?;
+                    live
+                }
+                (old, _) => {
+                    if let Some(old) = old {
+                        old.close().await;
+                    }
+                    let (system, prompt) = render_prompt(turns);
+                    let specs = tools
+                        .iter()
+                        .map(|t| Tool::new(t.name).with_description(t.description).with_parameters(t.parameters.clone()))
+                        .collect();
+                    let mut live = Live::open(client, model, &system, specs).await?;
+                    live.send(&prompt).await?;
+                    live
+                }
+            };
+            live.sent = turns.len();
+            let step = live
+                .read_step(&mut |d| {
+                    if let Delta::Content(s) = d {
+                        on_text(s);
+                    }
+                    !cancel.is_cancelled()
+                })
+                .await;
+            Ok((live, step))
+        })
+        .await;
+        match outcome {
+            Ok((live, Ok(step))) if !step.tool_calls.is_empty() && !cancel.is_cancelled() => {
+                *slot = Some(live);
+                Ok(step)
+            }
+            Ok((live, step)) => {
+                live.close().await;
+                step
+            }
+            Err(e) => Err(e),
         }
-        !cancel.is_cancelled()
-    })
-    .await
+    }
+}
+
+impl Drop for ChatTurnSession {
+    fn drop(&mut self) {
+        if let Some(live) = self.live.get_mut().take() {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(live.close());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -325,6 +495,49 @@ mod tests {
         ];
         assert_eq!(cheapest(&models), Some("gpt-5-mini"));
         assert_eq!(cheapest(&[model("auto", Some(0.0)), model("x", None)]), None);
+    }
+
+    fn asked(ids: &[&str]) -> ChatTurn {
+        let calls = ids
+            .iter()
+            .map(|id| ToolCall { id: id.to_string(), name: "search_notes".into(), arguments: "{}".into() })
+            .collect();
+        ChatTurn::assistant_tool_calls("", calls)
+    }
+
+    fn opening() -> Vec<ChatTurn> {
+        vec![ChatTurn::new("system", "S"), ChatTurn::new("user", "What did Acme decide?")]
+    }
+
+    #[test]
+    fn answered_tool_calls_continue_the_session() {
+        let mut turns = opening();
+        turns.push(asked(&["c1", "c2"]));
+        turns.push(ChatTurn::tool_result("c1", "kept the budget"));
+        turns.push(ChatTurn::tool_result("c2", "moved Q1 review"));
+        assert_eq!(
+            continuation(&turns, 2),
+            Some(vec![("c1".into(), "kept the budget".into()), ("c2".into(), "moved Q1 review".into())])
+        );
+    }
+
+    #[test]
+    fn the_forced_wrap_up_starts_a_new_session() {
+        let mut turns = opening();
+        turns.push(asked(&["c1"]));
+        turns.push(ChatTurn::tool_result("c1", "kept the budget"));
+        turns.push(ChatTurn::new("system", "Answer now."));
+        assert_eq!(continuation(&turns, 2), None);
+    }
+
+    #[test]
+    fn a_call_left_unanswered_or_a_history_it_never_saw_starts_over() {
+        let mut turns = opening();
+        turns.push(asked(&["c1", "c2"]));
+        turns.push(ChatTurn::tool_result("c1", "kept the budget"));
+        assert_eq!(continuation(&turns, 2), None, "c2 has no result");
+        assert_eq!(continuation(&opening(), 2), None, "nothing new");
+        assert_eq!(continuation(&opening(), 5), None, "fewer turns than were sent");
     }
 
     #[test]
@@ -405,18 +618,29 @@ mod tests {
             ChatTurn::new("system", "You answer only from the user's notes. Always search first."),
             ChatTurn::new("user", "What did Acme decide about the budget?"),
         ];
-        let first = step(&client, "auto", &turns, &[tool.clone()], &CancelFlag::new(), |_| {}).await.unwrap();
+        let turn = ChatTurnSession::default();
+        let cancel = CancelFlag::new();
+        let first = turn.step(&client, "auto", &turns, &[tool.clone()], &cancel, &mut |_| {}).await.unwrap();
         assert!(!first.tool_calls.is_empty(), "{first:?}");
         assert_eq!(first.tool_calls[0].name, "search_notes");
+        assert!(turn.live.lock().await.is_some(), "the session waits for the results");
 
         let mut followed = turns.to_vec();
         followed.push(ChatTurn::assistant_tool_calls("", first.tool_calls.clone()));
         for call in &first.tool_calls {
             followed.push(ChatTurn::tool_result(&call.id, "Acme kept the budget at 2 MNOK (meeting 3 Oct)."));
         }
-        let answer = step(&client, "auto", &followed, &[tool], &CancelFlag::new(), |_| {}).await.unwrap();
-        assert!(answer.tool_calls.is_empty(), "{answer:?}");
+        let mut answer = turn.step(&client, "auto", &followed, &[tool.clone()], &cancel, &mut |_| {}).await.unwrap();
+        // The model may search once more; answer it the same way.
+        while !answer.tool_calls.is_empty() {
+            followed.push(ChatTurn::assistant_tool_calls("", answer.tool_calls.clone()));
+            for call in &answer.tool_calls {
+                followed.push(ChatTurn::tool_result(&call.id, "Nothing more about Acme."));
+            }
+            answer = turn.step(&client, "auto", &followed, &[tool.clone()], &cancel, &mut |_| {}).await.unwrap();
+        }
         assert!(answer.text.contains('2'), "{}", answer.text);
+        assert!(turn.live.lock().await.is_none(), "an answered turn closes its session");
         rt.stop().await;
     }
 

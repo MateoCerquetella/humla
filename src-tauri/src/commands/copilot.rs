@@ -25,6 +25,8 @@ pub struct CopilotStatus {
     login: Option<String>,
     cli_path: Option<String>,
     cli_version: Option<String>,
+    /// Why the CLI last failed to start, if it did.
+    cli_error: Option<String>,
     /// The version a download would fetch.
     download_version: &'static str,
 }
@@ -42,6 +44,7 @@ pub async fn copilot_status(app: AppHandle, state: State<'_, AppState>) -> Resul
         login,
         cli_path: cli_path.map(|p| p.display().to_string()),
         cli_version,
+        cli_error: state.copilot.start_error(),
         download_version: cli::VERSION,
     })
 }

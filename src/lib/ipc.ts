@@ -8,6 +8,8 @@ export type CopilotStatus = {
   login: string | null;
   cliPath: string | null;
   cliVersion: string | null;
+  /** Why the CLI last failed to start, if it did. */
+  cliError: string | null;
   downloadVersion: string;
 };
 export type CopilotDeviceCode = { userCode: string; verificationUri: string; expiresIn: number };

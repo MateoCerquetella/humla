@@ -445,7 +445,7 @@ describe("ChatTab rebuild-index row", () => {
 });
 
 describe("ChatTab on GitHub Copilot", () => {
-  const ready = { login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", downloadVersion: "1" };
+  const ready = { login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" };
 
   it("never asks for Copilot's status while another provider is selected", async () => {
     const status = vi.fn(() => null);

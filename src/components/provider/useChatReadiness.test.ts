@@ -83,7 +83,7 @@ describe("useChatReadiness on GitHub Copilot", () => {
   it("is ready once Copilot is signed in and the CLI is present", async () => {
     mockTauri({
       settings_get: settingsGet("copilot"),
-      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", downloadVersion: "1" }),
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
     });
     const { result } = renderHook(() => useChatReadiness());
     await waitFor(() => expect(result.current.ready).toBe(true));
@@ -92,7 +92,7 @@ describe("useChatReadiness on GitHub Copilot", () => {
   it("names the missing CLI", async () => {
     mockTauri({
       settings_get: settingsGet("copilot"),
-      copilot_status: () => ({ login: "octocat", cliPath: null, cliVersion: null, downloadVersion: "1" }),
+      copilot_status: () => ({ login: "octocat", cliPath: null, cliVersion: null, cliError: null, downloadVersion: "1" }),
     });
     const { result } = renderHook(() => useChatReadiness());
     await waitFor(() =>

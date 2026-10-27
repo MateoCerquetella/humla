@@ -280,15 +280,16 @@ impl ChatAdapter for OllamaChatAdapter {
     }
 }
 
-/// GitHub Copilot through its CLI (#227). Each step is its own session; see
-/// `copilot::session` for why that keeps the loop here.
+/// GitHub Copilot through its CLI. One adapter serves one turn, and the turn's
+/// steps share a session (`copilot::session::ChatTurnSession`).
 pub struct CopilotChatAdapter {
     client: github_copilot_sdk::Client,
+    turn: crate::copilot::session::ChatTurnSession,
 }
 
 impl CopilotChatAdapter {
     pub fn new(client: github_copilot_sdk::Client) -> Self {
-        Self { client }
+        Self { client, turn: Default::default() }
     }
 }
 
@@ -305,10 +306,12 @@ impl ChatAdapter for CopilotChatAdapter {
         tools: &[ToolSpec],
         on_event: &mut (dyn FnMut(ChatStreamEvent) + Send),
     ) -> Result<ChatStep> {
-        let step = crate::copilot::session::step(&self.client, ctx.model, messages, tools, ctx.cancel, |s| {
-            on_event(ChatStreamEvent::TextDelta(s.to_string()))
-        })
-        .await?;
+        let step = self
+            .turn
+            .step(&self.client, ctx.model, messages, tools, ctx.cancel, &mut |s| {
+                on_event(ChatStreamEvent::TextDelta(s.to_string()))
+            })
+            .await?;
         for call in &step.tool_calls {
             on_event(ChatStreamEvent::ToolCall(call.clone()));
         }

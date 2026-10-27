@@ -11,6 +11,7 @@ const SIGNED_OUT: CopilotStatus = {
   login: null,
   cliPath: "/usr/local/bin/copilot",
   cliVersion: "1.2.3",
+  cliError: null,
   downloadVersion: "1.2.3",
 };
 const SIGNED_IN: CopilotStatus = { ...SIGNED_OUT, login: "octocat" };
@@ -50,6 +51,28 @@ describe("CopilotCard: the CLI", () => {
 
     status = { ...SIGNED_IN };
     await act(() => emit("copilot_cli_download", { status: "done", fraction: 1, message: null }));
+    expect(await screen.findByText("Installed · 1.2.3")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download Copilot CLI" })).toBeNull();
+  });
+
+  it("offers the supported version when the installed CLI won't start", async () => {
+    const download = vi.fn(() => null);
+    setup({
+      copilot_status: () => ({
+        ...SIGNED_IN,
+        cliVersion: "0.9.0",
+        cliError: "Couldn't start the Copilot CLI: protocol version 2 is not supported",
+      }),
+      copilot_cli_download: download,
+    });
+    expect(await screen.findByText(/version 0\.9\.0\) didn't start/)).toBeInTheDocument();
+    expect(screen.getByText(/protocol version 2 is not supported/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Download Copilot CLI" }));
+    expect(download).toHaveBeenCalled();
+  });
+
+  it("doesn't offer a download for a CLI of the supported version", async () => {
+    setup({ copilot_status: () => ({ ...SIGNED_IN, cliError: "Couldn't start the Copilot CLI: crashed" }) });
     expect(await screen.findByText("Installed · 1.2.3")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Download Copilot CLI" })).toBeNull();
   });

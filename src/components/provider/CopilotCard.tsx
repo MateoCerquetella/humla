@@ -142,20 +142,28 @@ export function CopilotCard({
       ? Math.round(download.fraction * 100)
       : null;
 
+  // A CLI that won't start is most likely a version the SDK can't speak; the
+  // supported download is found ahead of it once it exists.
+  const brokenCli = !!status.cliPath && !!status.cliError && status.cliVersion !== status.downloadVersion;
+
   return (
     <>
       <div className="py-3.5">
         <div className="text-sm">Copilot CLI</div>
-        {status.cliPath ? (
+        {status.cliPath && !brokenCli ? (
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
             {status.cliVersion ? `Installed · ${status.cliVersion}` : "Installed"}
           </p>
         ) : (
           <>
             <p className="text-xs text-[var(--color-text-muted)] mt-0.5 mb-2">
-              Humla reaches Copilot through GitHub's Copilot CLI, which isn't on this Mac yet
-              (version {status.downloadVersion}, about 120 MB).
+              {brokenCli
+                ? `The Copilot CLI on this Mac (version ${status.cliVersion ?? "unknown"}) didn't start. Download the version Humla supports (${status.downloadVersion}, about 120 MB).`
+                : `Humla reaches Copilot through GitHub's Copilot CLI, which isn't on this Mac yet (version ${status.downloadVersion}, about 120 MB).`}
             </p>
+            {brokenCli && (
+              <p className="text-xs text-[var(--color-danger)] mb-2 break-words">{status.cliError}</p>
+            )}
             {download.kind === "running" ? (
               <>
                 <p className="text-xs text-[var(--color-text-muted)]">
