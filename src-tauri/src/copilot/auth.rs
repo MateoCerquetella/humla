@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Humla's OAuth app. Public by design: the device flow has no secret.
-pub const CLIENT_ID: &str = "Ov23libbrlL49ShulUqJ";
+pub const CLIENT_ID: &str = "Ov23li0tjvtZ2DAfOFUu";
 pub const GITHUB: &str = "https://github.com";
 
 /// Refresh this long before the access token runs out, so a summary that
