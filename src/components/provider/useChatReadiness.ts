@@ -84,12 +84,19 @@ export function useChatReadiness() {
     Promise.all([
       ipc.getSetting("chat_provider"),
       ipc.getSetting("chat_model"),
+      ipc.getSetting("copilot_chat_model"),
       ipc.getSetting("local_llm_base_url"),
     ])
-      .then(([p, m, b]) => {
+      .then(([p, m, copilotModel, b]) => {
         if (cancelled) return;
-        setProvider(p || DEFAULTS.chat_provider);
-        setModel(m || DEFAULTS.chat_model);
+        const chosen = p || DEFAULTS.chat_provider;
+        setProvider(chosen);
+        // Copilot answers on its own model setting, not the shared one.
+        setModel(
+          chosen === "copilot"
+            ? copilotModel || DEFAULTS.copilot_chat_model
+            : m || DEFAULTS.chat_model,
+        );
         setBaseUrl(b || DEFAULTS.local_llm_base_url);
         setLoading(false);
       })

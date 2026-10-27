@@ -89,6 +89,33 @@ describe("useChatReadiness on GitHub Copilot", () => {
     await waitFor(() => expect(result.current.ready).toBe(true));
   });
 
+  // `chat_model` is shared by OpenAI, Anthropic and local; Copilot answers on
+  // its own setting, so a model left there by another provider isn't it.
+  it("names Copilot's own chat model, not the shared one", async () => {
+    const settings: Record<string, string> = {
+      chat_provider: "copilot",
+      chat_model: "gpt-5.6-luna",
+      copilot_chat_model: "claude-sonnet-5.5",
+    };
+    mockTauri({
+      settings_get: (args) => settings[(args as { key: string }).key] ?? null,
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
+    });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() => expect(result.current.model).toBe("claude-sonnet-5.5"));
+  });
+
+  it("names auto when Copilot has no chat model chosen", async () => {
+    mockTauri({
+      settings_get: (args) =>
+        ({ chat_provider: "copilot", chat_model: "gpt-5.6-luna" })[(args as { key: string }).key] ?? null,
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
+    });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.model).toBe("auto");
+  });
+
   it("names the missing CLI", async () => {
     mockTauri({
       settings_get: settingsGet("copilot"),
