@@ -100,7 +100,7 @@ export function ChatTab({ s, update }: Pick<SettingsHook, "s" | "update">) {
       </p>
       <Row
         label="Provider"
-        description="Ask questions grounded in your notes. Cloud (OpenAI) uses your key; Local runs fully offline against Ollama or any OpenAI-compatible server. Independent of your transcription and summary providers."
+        description="Ask questions grounded in your notes. Cloud providers use your key or, for GitHub Copilot, your Copilot subscription; Local runs fully offline against Ollama or any OpenAI-compatible server. Independent of your transcription and summary providers."
         control={
           <Select
             value={s.chat_provider}
