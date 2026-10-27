@@ -1225,7 +1225,7 @@ where
 // `messages`/`tools` are pre-lowered `serde_json::Value`s so this wire layer
 // stays free of the chat module's types.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// A tool call parsed off the wire: provider-supplied (or synthesised) `id`,
 /// tool `name`, and raw JSON `arguments` as a string.
@@ -1247,6 +1247,188 @@ struct ToolChatRequest<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+}
+
+/// Whether a failed request is OpenAI refusing function tools alongside the
+/// model's reasoning on `/v1/chat/completions`; such a model takes tools only
+/// through `/v1/responses`.
+fn refuses_tools_beside_reasoning(error: &str) -> bool {
+    let Some(json) = error.find('{').map(|i| &error[i..]) else { return false };
+    serde_json::from_str::<Value>(json)
+        .ok()
+        .and_then(|v| v["error"]["param"].as_str().map(|p| p == "reasoning_effort"))
+        .unwrap_or(false)
+}
+
+/// Models that refused tools on `/v1/chat/completions` this launch, so their
+/// later steps go straight to `/v1/responses`.
+static RESPONSES_FOR_TOOLS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Chat-completions messages and tools as the Responses API takes them: system
+/// turns become `instructions`, tool calls `function_call` items and tool
+/// results `function_call_output` items.
+fn responses_request_parts(messages: &[Value], tools: &[Value]) -> (String, Vec<Value>, Vec<Value>) {
+    let mut instructions = Vec::new();
+    let mut input = Vec::new();
+    for m in messages {
+        let role = m["role"].as_str().unwrap_or_default();
+        let content = m["content"].as_str().unwrap_or_default();
+        match role {
+            "system" => instructions.push(content.to_string()),
+            "tool" => input.push(json!({
+                "type": "function_call_output",
+                "call_id": m["tool_call_id"],
+                "output": content,
+            })),
+            _ => {
+                let calls = m["tool_calls"].as_array();
+                if !content.is_empty() || calls.is_none() {
+                    input.push(json!({ "role": role, "content": content }));
+                }
+                for call in calls.into_iter().flatten() {
+                    input.push(json!({
+                        "type": "function_call",
+                        "call_id": call["id"],
+                        "name": call["function"]["name"],
+                        "arguments": call["function"]["arguments"],
+                    }));
+                }
+            }
+        }
+    }
+    let tools = tools
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "function",
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+                "parameters": t["function"]["parameters"],
+            })
+        })
+        .collect();
+    (instructions.join("\n\n"), input, tools)
+}
+
+/// What a streamed Responses call has produced so far.
+#[derive(Default)]
+struct ResponsesFold {
+    text: String,
+    /// Function calls by output index: call id, name, arguments.
+    calls: std::collections::BTreeMap<u64, (String, String, String)>,
+    done: bool,
+}
+
+impl ResponsesFold {
+    /// Take one stream event; the answer text it adds, if any.
+    fn feed(&mut self, ev: &Value) -> Result<Option<String>> {
+        let index = ev["output_index"].as_u64().unwrap_or_default();
+        match ev["type"].as_str().unwrap_or_default() {
+            "response.output_text.delta" => {
+                let delta = ev["delta"].as_str().unwrap_or_default().to_string();
+                self.text.push_str(&delta);
+                return Ok(Some(delta));
+            }
+            "response.output_item.added" | "response.output_item.done"
+                if ev["item"]["type"] == "function_call" =>
+            {
+                let item = &ev["item"];
+                let slot = self.calls.entry(index).or_default();
+                slot.0 = item["call_id"].as_str().unwrap_or_default().to_string();
+                slot.1 = item["name"].as_str().unwrap_or_default().to_string();
+                let args = item["arguments"].as_str().unwrap_or_default();
+                if !args.is_empty() {
+                    slot.2 = args.to_string();
+                }
+            }
+            "response.function_call_arguments.delta" => {
+                self.calls.entry(index).or_default().2.push_str(ev["delta"].as_str().unwrap_or_default());
+            }
+            "response.completed" | "response.incomplete" => self.done = true,
+            "response.failed" => {
+                let message = ev["response"]["error"]["message"].as_str().unwrap_or("the response failed");
+                return Err(anyhow!("OpenAI: {message}"));
+            }
+            "error" => {
+                let message = ev["message"].as_str().unwrap_or("stream error");
+                return Err(anyhow!("OpenAI: {message}"));
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn tool_calls(&self) -> Vec<RawToolCall> {
+        self.calls
+            .values()
+            .filter(|(_, name, _)| !name.is_empty())
+            .enumerate()
+            .map(|(i, (id, name, arguments))| RawToolCall {
+                id: if id.is_empty() { format!("call_{i}") } else { id.clone() },
+                name: name.clone(),
+                arguments: if arguments.trim().is_empty() { "{}".into() } else { arguments.clone() },
+            })
+            .collect()
+    }
+}
+
+/// One cloud step through `/v1/responses`, for a model that takes tools only
+/// there. Same contract as [`openai_chat_step`].
+async fn openai_responses_step<F>(
+    api_key: &str,
+    model: &str,
+    messages: &[Value],
+    tools: &[Value],
+    mut on_delta: F,
+) -> Result<(String, Vec<RawToolCall>)>
+where
+    F: FnMut(&str) -> bool + Send,
+{
+    use futures_util::StreamExt;
+    let (instructions, input, tools) = responses_request_parts(messages, tools);
+    let mut body = json!({ "model": model, "input": input, "stream": true, "store": false });
+    if !instructions.is_empty() {
+        body["instructions"] = json!(instructions);
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
+    }
+    let started = std::time::Instant::now();
+    let ep = Endpoint::Cloud;
+    let http = ep.client();
+    let url = format!("{BASE}/responses");
+    let r = match send_with_retries(|| http.post(&url).bearer_auth(api_key).json(&body), started).await {
+        Ok(r) => r,
+        Err(e) if e.is_timeout() => return Err(ep.timeout_error(started.elapsed().as_secs())),
+        Err(e) if e.is_connect() => return Err(ep.connect_error()),
+        Err(e) => return Err(ep.network_error(&error_chain(&e))),
+    };
+    let r = check_chat_status(&ep, r, started).await?;
+
+    let mut stream = r.bytes_stream();
+    let mut lines = LineBuf::default();
+    let mut fold = ResponsesFold::default();
+    'read: while let Some(chunk) = stream.next().await {
+        lines.extend(&chunk.map_err(|e| anyhow!("stream read: {e}"))?);
+        while let Some(line) = lines.next_line() {
+            let Some(data) = line.trim().strip_prefix("data:") else { continue };
+            let Ok(ev) = serde_json::from_str::<Value>(data.trim()) else { continue };
+            if let Some(delta) = fold.feed(&ev)? {
+                if !delta.is_empty() && !on_delta(&delta) {
+                    return Ok((fold.text, Vec::new()));
+                }
+            }
+            if fold.done {
+                break 'read;
+            }
+        }
+    }
+    let tool_calls = fold.tool_calls();
+    if fold.text.trim().is_empty() && tool_calls.is_empty() {
+        return Err(empty_answer_error(model, None, 0));
+    }
+    Ok((fold.text, tool_calls))
 }
 
 // Streaming SSE delta shapes for OpenAI tool calls. `tool_calls` arrive as
@@ -1323,7 +1505,18 @@ where
     // `base_url` may be a local OpenAI-compat server, which needs the longer
     // timeout and its own failure vocabulary — `Endpoint` owns both.
     let ep = Endpoint::from_base(base_url);
-    let r = post_chat_lifting_limit(&ep, api_key, std::time::Instant::now(), req).await?;
+    let cloud = matches!(ep, Endpoint::Cloud);
+    if cloud && !tools.is_empty() && RESPONSES_FOR_TOOLS.lock().contains(model) {
+        return openai_responses_step(api_key, model, messages, tools, on_delta).await;
+    }
+    let r = match post_chat_lifting_limit(&ep, api_key, std::time::Instant::now(), req).await {
+        Err(e) if cloud && !tools.is_empty() && refuses_tools_beside_reasoning(&e.to_string()) => {
+            eprintln!("[llm] {model} takes tools only through /v1/responses; using it for this model");
+            RESPONSES_FOR_TOOLS.lock().insert(model.to_string());
+            return openai_responses_step(api_key, model, messages, tools, on_delta).await;
+        }
+        r => r?,
+    };
 
     use futures_util::StreamExt;
     let mut byte_stream = r.bytes_stream();
@@ -1729,7 +1922,98 @@ pub(crate) async fn openai_embed(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_model_refusing_tools_beside_reasoning_is_recognised() {
+        let refusal = r#"HTTP 400 Bad Request from https://api.openai.com/v1: { "error": { "message": "Function tools with reasoning_effort are not supported for gpt-6.1-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.", "type": "invalid_request_error", "param": "reasoning_effort", "code": null } }"#;
+        assert!(refuses_tools_beside_reasoning(refusal));
+        let other = r#"HTTP 400 Bad Request from https://api.openai.com/v1: { "error": { "message": "Unsupported value: 'temperature'", "type": "invalid_request_error", "param": "temperature", "code": null } }"#;
+        assert!(!refuses_tools_beside_reasoning(other));
+        assert!(!refuses_tools_beside_reasoning("HTTP 500 Internal Server Error from https://api.openai.com/v1: oops"));
+    }
+
+    #[test]
+    fn chat_messages_become_responses_items() {
+        let messages = vec![
+            json!({ "role": "system", "content": "Answer from notes." }),
+            json!({ "role": "system", "content": "Today is 27 Oct." }),
+            json!({ "role": "user", "content": "What did Acme decide?" }),
+            json!({ "role": "assistant", "content": "", "tool_calls": [
+                { "id": "call_1", "type": "function", "function": { "name": "search_notes", "arguments": "{\"query\":\"Acme\"}" } }
+            ]}),
+            json!({ "role": "tool", "tool_call_id": "call_1", "content": "kept the budget" }),
+        ];
+        let tools = vec![json!({ "type": "function", "function": {
+            "name": "search_notes", "description": "Search notes.", "parameters": { "type": "object" }
+        }})];
+
+        let (instructions, input, tools) = responses_request_parts(&messages, &tools);
+
+        assert_eq!(instructions, "Answer from notes.\n\nToday is 27 Oct.");
+        assert_eq!(
+            input,
+            vec![
+                json!({ "role": "user", "content": "What did Acme decide?" }),
+                json!({ "type": "function_call", "call_id": "call_1", "name": "search_notes", "arguments": "{\"query\":\"Acme\"}" }),
+                json!({ "type": "function_call_output", "call_id": "call_1", "output": "kept the budget" }),
+            ]
+        );
+        assert_eq!(
+            tools,
+            vec![json!({ "type": "function", "name": "search_notes", "description": "Search notes.", "parameters": { "type": "object" } })]
+        );
+    }
+
+    #[test]
+    fn an_assistant_turn_with_text_keeps_it_beside_its_calls() {
+        let (_, input, _) = responses_request_parts(
+            &[json!({ "role": "assistant", "content": "Let me look.", "tool_calls": [
+                { "id": "c", "type": "function", "function": { "name": "get_note", "arguments": "{}" } }
+            ]})],
+            &[],
+        );
+        assert_eq!(input[0], json!({ "role": "assistant", "content": "Let me look." }));
+        assert_eq!(input[1]["type"], "function_call");
+    }
+
+    #[test]
+    fn the_stream_folds_into_text_and_tool_calls() {
+        let mut fold = ResponsesFold::default();
+        let mut streamed = String::new();
+        for ev in [
+            json!({"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"search_notes","arguments":""}}),
+            json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"query\":"}),
+            json!({"type":"response.function_call_arguments.delta","output_index":0,"delta":"\"Acme\"}"}),
+            json!({"type":"response.output_item.added","output_index":1,"item":{"type":"message","role":"assistant","content":[]}}),
+            json!({"type":"response.output_text.delta","output_index":1,"delta":"Hi"}),
+            json!({"type":"response.output_text.delta","output_index":1,"delta":" there"}),
+            json!({"type":"response.completed","response":{"status":"completed"}}),
+        ] {
+            if let Some(delta) = fold.feed(&ev).unwrap() {
+                streamed.push_str(&delta);
+            }
+        }
+        assert!(fold.done);
+        assert_eq!(streamed, "Hi there");
+        assert_eq!(fold.text, "Hi there");
+        assert_eq!(
+            fold.tool_calls(),
+            vec![RawToolCall { id: "call_1".into(), name: "search_notes".into(), arguments: "{\"query\":\"Acme\"}".into() }]
+        );
+    }
+
+    #[test]
+    fn a_failed_response_is_an_error() {
+        let mut fold = ResponsesFold::default();
+        let err = fold
+            .feed(&json!({"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"The server had an error"}}}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("The server had an error"), "{err}");
+        assert!(fold.feed(&json!({"type":"error","message":"rate limited"})).unwrap_err().to_string().contains("rate limited"));
+    }
+
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_model_listing_is_narrowed_to_chat_models() {
