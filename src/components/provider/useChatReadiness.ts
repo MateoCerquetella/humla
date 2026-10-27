@@ -4,6 +4,7 @@ import { DEFAULTS } from "../../pages/settings/types";
 import { isEmbeddingModel, isOllamaUrl } from "../../lib/localModels";
 import { useOllamaProbe } from "./useOllamaProbe";
 import { useProviderKey } from "./useProviderKey";
+import { copilotHint, useCopilotStatus } from "./useCopilot";
 
 /** What still stands between a local chat provider and a working chat, or `""`
  *  when nothing does. Shared by the Settings tab and the Note pane so the two
@@ -83,12 +84,19 @@ export function useChatReadiness() {
     Promise.all([
       ipc.getSetting("chat_provider"),
       ipc.getSetting("chat_model"),
+      ipc.getSetting("copilot_chat_model"),
       ipc.getSetting("local_llm_base_url"),
     ])
-      .then(([p, m, b]) => {
+      .then(([p, m, copilotModel, b]) => {
         if (cancelled) return;
-        setProvider(p || DEFAULTS.chat_provider);
-        setModel(m || DEFAULTS.chat_model);
+        const chosen = p || DEFAULTS.chat_provider;
+        setProvider(chosen);
+        // Copilot answers on its own model setting, not the shared one.
+        setModel(
+          chosen === "copilot"
+            ? copilotModel || DEFAULTS.copilot_chat_model
+            : m || DEFAULTS.chat_model,
+        );
         setBaseUrl(b || DEFAULTS.local_llm_base_url);
         setLoading(false);
       })
@@ -102,8 +110,10 @@ export function useChatReadiness() {
 
   const isOllama = provider === "ollama";
   const isAnthropic = provider === "anthropic";
-  const key = useProviderKey("openai", { enabled: !isOllama && !isAnthropic });
+  const isCopilot = provider === "copilot";
+  const key = useProviderKey("openai", { enabled: !isOllama && !isAnthropic && !isCopilot });
   const anthropicKey = useProviderKey("anthropic", { enabled: isAnthropic });
+  const copilot = useCopilotStatus({ enabled: !loading && isCopilot });
   const { reachable, installed } = useOllamaProbe(baseUrl, { enabled: isOllama });
 
   let ready = false;
@@ -112,6 +122,9 @@ export function useChatReadiness() {
     hint = "";
   } else if (isOllama) {
     hint = localChatHint({ reachable, installed, model, baseUrl, where: "settings" });
+    ready = hint === "";
+  } else if (isCopilot) {
+    hint = copilotHint(copilot, "in Settings → Chat");
     ready = hint === "";
   } else {
     hint = cloudChatHint({

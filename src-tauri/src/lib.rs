@@ -4,6 +4,7 @@ mod export_doc;
 mod keychain;
 mod openai;
 mod anthropic;
+mod copilot;
 mod local_whisper;
 mod diarize;
 mod echo;
@@ -81,6 +82,8 @@ pub struct AppState {
     /// on this note or another. Its only job is to keep a second Transcribe
     /// press on the *same* note from replaying the same take twice.
     pub transcribing: Arc<Mutex<std::collections::HashSet<String>>>,
+    /// The Copilot CLI while it runs, and where it was found (#227).
+    pub copilot: Arc<copilot::Runtime>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -211,6 +214,7 @@ where
                 unify_locks: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 chat_cancels: Arc::new(Mutex::new(std::collections::HashMap::new())),
                 transcribing: Arc::new(Mutex::new(std::collections::HashSet::new())),
+                copilot: Arc::new(copilot::Runtime::default()),
             });
             let menu = build_menu(app.handle())?;
             app.set_menu(menu)?;
@@ -425,6 +429,12 @@ where
             commands::provider_key_get,
             commands::provider_key_set,
             commands::provider_key_test,
+            commands::copilot_status,
+            commands::copilot_sign_in_start,
+            commands::copilot_sign_in_cancel,
+            commands::copilot_sign_out,
+            commands::copilot_cli_download,
+            commands::copilot_models,
             commands::local_whisper_models,
             commands::local_whisper_download,
             commands::local_whisper_delete,

@@ -4,7 +4,7 @@ version = "0.71.0"
 description = "Humla — personal meeting notes that hum along"
 authors = ["Michael Wilhelmsen"]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.94"
 license = "MIT"
 # The app is THE binary. Required since `humla-mcp` (#172) became a second
 # `[[bin]]`: `tauri dev` shells out to a bare `cargo run`, which refuses to pick
@@ -88,6 +88,14 @@ tauri-plugin-autostart = "~2.5"
 pulldown-cmark = { version = "0.13", default-features = false }
 krilla = { version = "0.8", default-features = false, features = ["simple-text"] }
 rustybuzz = "0.20"
+# GitHub Copilot: drives the user's Copilot CLI over JSON-RPC. Without
+# `bundled-cli`, so copilot::cli finds or downloads the CLI at run time.
+github-copilot-sdk = { version = "=1.0.27", default-features = false, features = ["runtime"] }
+# The Copilot CLI download: an npm tarball, checked against a pinned sha512.
+tar = "0.4"
+flate2 = "1"
+sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

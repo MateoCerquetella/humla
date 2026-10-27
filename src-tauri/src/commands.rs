@@ -23,6 +23,7 @@ mod api_keys;
 mod assets;
 mod chat;
 mod clients;
+mod copilot;
 // `pub(crate)` so `crate::menubar` can resolve the active workspace when it
 // creates a note for a headless recording.
 pub(crate) mod cloud;
@@ -51,6 +52,7 @@ pub use api_keys::*;
 pub use assets::*;
 pub use chat::*;
 pub use clients::*;
+pub use copilot::*;
 pub use cloud::*;
 pub use cloud_auth::*;
 pub use export::*;

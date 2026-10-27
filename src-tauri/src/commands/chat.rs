@@ -39,7 +39,7 @@ fn resolve_embed(resolved: &ResolvedChat) -> Option<embed::EmbedConfig> {
             base_url: resolved.embed.base_url.clone().unwrap_or_else(|| resolved.base_url.clone()),
             api_key: None,
         }),
-        ProviderId::Anthropic => None,
+        ProviderId::Anthropic | ProviderId::Copilot => None,
         _ => Some(embed::EmbedConfig {
             provider: "openai",
             model: OPENAI_EMBED_MODEL.to_string(),
@@ -556,6 +556,18 @@ fn resolve_chat(
                 provider: id,
                 base_url: crate::anthropic::BASE.into(),
                 api_key: Some(api_key),
+                model,
+                think: false,
+                embed: EmbedOverride::default(),
+            })
+        }
+        ProviderId::Copilot => {
+            let model = setting("copilot_chat_model")?
+                .unwrap_or_else(|| crate::copilot::DEFAULT_MODEL.to_string());
+            Ok(ResolvedChat {
+                provider: id,
+                base_url: String::new(),
+                api_key: None,
                 model,
                 think: false,
                 embed: EmbedOverride::default(),
@@ -1917,7 +1929,17 @@ pub async fn chat_send(
         embed_note(&state.db, embedder, anchor).await;
     }
 
-    let adapter = chat::build_chat_adapter(resolved.provider).map_err(|e| e.to_string())?;
+    let adapter: Box<dyn chat::ChatAdapter> = if resolved.provider == ProviderId::Copilot {
+        let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let client = state
+            .copilot
+            .ready_client(&state.keychain_cache, &app_data)
+            .await
+            .map_err(|e| e.to_string())?;
+        Box::new(chat::CopilotChatAdapter::new(client))
+    } else {
+        chat::build_chat_adapter(resolved.provider).map_err(|e| e.to_string())?
+    };
     let conv_for_sink = conversation_id.clone();
     let app_for_sink = app.clone();
     let sink = move |ev: ChatEvent| match ev {
@@ -3190,6 +3212,23 @@ mod tests {
         assert_eq!(resolved.base_url, crate::anthropic::BASE);
         assert_eq!(resolved.model, crate::anthropic::DEFAULT_MODEL);
         assert!(resolve_embed(&resolved).is_none());
+    }
+
+    // Copilot keeps its own model setting: its ids overlap Anthropic's and
+    // OpenAI's without meaning the same thing, so the shared one can't serve it.
+    #[test]
+    fn copilot_chat_uses_its_own_model_and_has_no_embedder() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open(&dir.path().join("copilot.sqlite")).unwrap();
+        db::set_setting(&conn, "chat_provider", "copilot").unwrap();
+        db::set_setting(&conn, "chat_model", "gpt-5.5").unwrap();
+        let resolved = resolve_chat(&conn, None).unwrap();
+        assert_eq!(resolved.provider, ProviderId::Copilot);
+        assert_eq!(resolved.model, "auto");
+        assert!(resolve_embed(&resolved).is_none());
+
+        db::set_setting(&conn, "copilot_chat_model", "claude-opus-5.5").unwrap();
+        assert_eq!(resolve_chat(&conn, None).unwrap().model, "claude-opus-5.5");
     }
 
     // One `chat_model` serves every provider, so switching leaves the last

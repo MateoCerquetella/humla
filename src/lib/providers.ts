@@ -6,6 +6,7 @@
 export const PROVIDERS = [
   { id: "openai", label: "OpenAI", keychain: true, summarize: true, chat: true, transcribe: true },
   { id: "anthropic", label: "Anthropic", keychain: true, summarize: true, chat: true, transcribe: false },
+  { id: "copilot", label: "GitHub Copilot", keychain: false, summarize: true, chat: true, transcribe: false },
   { id: "deepgram", label: "Deepgram", keychain: true, summarize: false, chat: false, transcribe: true },
   { id: "groq", label: "Groq", keychain: true, summarize: false, chat: false, transcribe: true },
   { id: "local", label: "Local", keychain: false, summarize: true, chat: true, transcribe: true },

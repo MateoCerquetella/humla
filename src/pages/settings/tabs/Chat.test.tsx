@@ -21,6 +21,7 @@ describe("ChatTab provider setting", () => {
     expect(options).toEqual([
       "Cloud (OpenAI)",
       "Cloud (Anthropic)",
+      "Cloud (GitHub Copilot)",
       "Local (any OpenAI-compatible server)",
     ]);
     expect(screen.queryByRole("option", { name: /Groq/i })).toBeNull();
@@ -440,5 +441,40 @@ describe("ChatTab rebuild-index row", () => {
     render(<ChatTab s={settings()} update={async () => {}} />);
     expect(await screen.findByText(/Up to date/)).toBeTruthy();
     expect(screen.queryByText(/indexed before the latest improvements/)).toBeNull();
+  });
+});
+
+describe("ChatTab on GitHub Copilot", () => {
+  const ready = { login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" };
+
+  it("never asks for Copilot's status while another provider is selected", async () => {
+    const status = vi.fn(() => null);
+    mockTauri({ copilot_status: status });
+    render(<ChatTab s={settings({ chat_provider: "openai" })} update={async () => {}} />);
+    await screen.findByLabelText("OpenAI API key");
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it("writes the model to copilot_chat_model and reads ready", async () => {
+    mockTauri({
+      copilot_status: () => ready,
+      copilot_models: () => [
+        { id: "auto", name: "Auto", vendor: null },
+        { id: "gpt-5.4", name: "GPT-5.4", vendor: "OpenAI" },
+      ],
+    });
+    const update = vi.fn();
+    render(<ChatTab s={settings({ chat_provider: "copilot" })} update={update} />);
+    expect(await screen.findByText("Ready ✓")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("combobox", { name: "Auto" }));
+    await userEvent.click(await screen.findByRole("option", { name: "GPT-5.4" }));
+    expect(update).toHaveBeenCalledWith("copilot_chat_model", "gpt-5.4");
+    expect(update).not.toHaveBeenCalledWith("chat_model", expect.anything());
+  });
+
+  it("asks for a sign-in when signed out", async () => {
+    mockTauri({ copilot_status: () => ({ ...ready, login: null }) });
+    render(<ChatTab s={settings({ chat_provider: "copilot" })} update={async () => {}} />);
+    expect(await screen.findByText("Sign in to GitHub Copilot above.")).toBeInTheDocument();
   });
 });

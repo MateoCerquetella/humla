@@ -48,6 +48,8 @@ export const DEFAULTS: Record<EditableKey, string> = {
   custom_vocabulary: "",
   summary_model: "gpt-5.4-mini",
   anthropic_model: "claude-sonnet-5",
+  copilot_model: "auto",
+  copilot_chat_model: "auto",
   summary_provider: "openai",
   local_llm_base_url: "http://localhost:11434/v1",
   local_llm_model: "",
@@ -79,6 +81,7 @@ export const LOCAL_PROVIDER = {
 const PROVIDER_PICKER_LABEL: Record<Provider, string> = {
   openai: "Cloud (OpenAI)",
   anthropic: "Cloud (Anthropic)",
+  copilot: "Cloud (GitHub Copilot)",
   local: "Local (any OpenAI-compatible server)",
   deepgram: "Deepgram",
   groq: "Groq",

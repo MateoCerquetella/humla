@@ -24,7 +24,9 @@
 //!   not be told one failed, and a local-only user with no LLM configured
 //!   would otherwise be toasted after every recording.
 
-use super::summary::{language_directive, note_language, resolve_provider, summary_provider_id};
+use super::summary::{
+    attach_copilot, language_directive, note_language, resolve_provider, summary_provider_id,
+};
 use super::TITLE_FALLBACK_MODEL;
 use crate::db::{self, NotePatch};
 use crate::menubar::is_replaceable_title;
@@ -301,6 +303,13 @@ async fn try_generate_note_title(
     // is definitely happening, which is exactly what the Note view shimmers
     // over. Bracketing any earlier would flash a placeholder on notes we then
     // decline to title.
+    attach_copilot(app, &mut provider).await?;
+    if let Some(client) = provider.copilot.as_ref() {
+        let models = crate::copilot::session::list_models(client).await.unwrap_or_default();
+        if let Some(cheapest) = crate::copilot::session::cheapest(&models) {
+            provider.model = cheapest.to_string();
+        }
+    }
     emit_title_status(app, note_id, true);
     let written = write_generated_title(app, note_id, &provider, &language, &note, force).await;
     emit_title_status(app, note_id, false);

@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { localChatHint } from "./useChatReadiness";
+import { describe, it, expect, vi } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { localChatHint, useChatReadiness } from "./useChatReadiness";
+import { mockTauri } from "../../test/tauri";
 
 // The local chat provider is not necessarily Ollama (#179), so the advice has
 // to name the server the user actually runs. One ladder, two readers: the
@@ -71,5 +73,65 @@ describe("localChatHint", () => {
         where: "above",
       }),
     ).toMatch(/is an embedding model/);
+  });
+});
+
+describe("useChatReadiness on GitHub Copilot", () => {
+  const settingsGet = (provider: string) => (args: unknown) =>
+    (args as { key: string }).key === "chat_provider" ? provider : null;
+
+  it("is ready once Copilot is signed in and the CLI is present", async () => {
+    mockTauri({
+      settings_get: settingsGet("copilot"),
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
+    });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+  });
+
+  // `chat_model` is shared by OpenAI, Anthropic and local; Copilot answers on
+  // its own setting, so a model left there by another provider isn't it.
+  it("names Copilot's own chat model, not the shared one", async () => {
+    const settings: Record<string, string> = {
+      chat_provider: "copilot",
+      chat_model: "gpt-5.6-luna",
+      copilot_chat_model: "claude-sonnet-5.5",
+    };
+    mockTauri({
+      settings_get: (args) => settings[(args as { key: string }).key] ?? null,
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
+    });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() => expect(result.current.model).toBe("claude-sonnet-5.5"));
+  });
+
+  it("names auto when Copilot has no chat model chosen", async () => {
+    mockTauri({
+      settings_get: (args) =>
+        ({ chat_provider: "copilot", chat_model: "gpt-5.6-luna" })[(args as { key: string }).key] ?? null,
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", cliError: null, downloadVersion: "1" }),
+    });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.model).toBe("auto");
+  });
+
+  it("names the missing CLI", async () => {
+    mockTauri({
+      settings_get: settingsGet("copilot"),
+      copilot_status: () => ({ login: "octocat", cliPath: null, cliVersion: null, cliError: null, downloadVersion: "1" }),
+    });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() =>
+      expect(result.current.hint).toBe("Download the Copilot CLI in Settings → Chat to use GitHub Copilot."),
+    );
+  });
+
+  it("never asks for Copilot's status on another provider", async () => {
+    const status = vi.fn(() => null);
+    mockTauri({ settings_get: settingsGet("openai"), copilot_status: status, provider_key_get: () => "stored" });
+    const { result } = renderHook(() => useChatReadiness());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(status).not.toHaveBeenCalled();
   });
 });

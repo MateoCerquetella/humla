@@ -8,6 +8,9 @@ use std::fmt;
 pub enum ProviderId {
     OpenAi,
     Anthropic,
+    /// GitHub Copilot, through the user's subscription and the Copilot CLI.
+    /// Signed in by OAuth rather than a pasted key (`copilot::auth`).
+    Copilot,
     Deepgram,
     Groq,
     /// Local Whisper for transcription; any OpenAI-compatible server (Ollama,
@@ -85,6 +88,14 @@ pub const REGISTRY: &[ProviderSpec] = &[
             url: "https://api.anthropic.com/v1/models",
             auth: AuthScheme::AnthropicKey,
         }),
+        capabilities: Capabilities { summarize: true, chat: true, transcribe: false },
+    },
+    ProviderSpec {
+        id: ProviderId::Copilot,
+        id_str: "copilot",
+        label: "GitHub Copilot",
+        keychain_account: None,
+        key_test: None,
         capabilities: Capabilities { summarize: true, chat: true, transcribe: false },
     },
     ProviderSpec {
@@ -197,6 +208,16 @@ mod tests {
         assert_eq!(ProviderId::Deepgram.keychain_account(), Some("deepgram_api_key"));
         assert_eq!(ProviderId::Groq.keychain_account(), Some("groq_api_key"));
         assert_eq!(ProviderId::Local.keychain_account(), None);
+        assert_eq!(ProviderId::Copilot.keychain_account(), None);
+    }
+
+    #[test]
+    fn copilot_summarises_and_chats_but_does_not_transcribe() {
+        assert_eq!(ProviderId::parse("copilot"), Some(ProviderId::Copilot));
+        assert_eq!(
+            ProviderId::Copilot.capabilities(),
+            Capabilities { summarize: true, chat: true, transcribe: false }
+        );
     }
 
     #[test]

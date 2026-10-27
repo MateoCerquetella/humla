@@ -10,6 +10,8 @@ import { RECOMMENDED_OLLAMA_MODEL, RECOMMENDED_OLLAMA_MODEL_16GB } from "../../.
 import { SUMMARY_PRESETS, presetLabel } from "../../../lib/presets";
 import { useCloudModels } from "../../../components/provider/useCloudModels";
 import { useProviderKey } from "../../../components/provider/useProviderKey";
+import { CopilotCard } from "../../../components/provider/CopilotCard";
+import { useCopilotStatus } from "../../../components/provider/useCopilot";
 import { SUMMARY_PROVIDERS } from "../types";
 import type { SettingsHook } from "../useSettings";
 
@@ -31,13 +33,15 @@ export function SummaryTab({
   const anthropicModels = useCloudModels("anthropic", anthropicKey.hasKey, s.anthropic_model, {
     enabled: isAnthropic,
   });
+  const isCopilot = s.summary_provider === "copilot";
+  const copilot = useCopilotStatus({ enabled: isCopilot });
 
   return (
     <>
       <Section title="Summaries">
         <Row
           label="Provider"
-          description="Local keeps the transcript on your Mac — pick this for confidential meetings. The cloud providers (OpenAI, Anthropic) are faster and produce better summaries, but send the transcript to them."
+          description="Local keeps the transcript on your Mac — pick this for confidential meetings. The cloud providers (OpenAI, Anthropic, GitHub Copilot) are faster and produce better summaries, but send the transcript to them."
           control={
             <Select
               value={s.summary_provider}
@@ -79,6 +83,15 @@ export function SummaryTab({
             />
             <ProviderKeyCard provider="anthropic" />
           </>
+        )}
+
+        {isCopilot && (
+          <CopilotCard
+            copilot={copilot}
+            model={s.copilot_model}
+            onModelChange={(v) => update("copilot_model", v)}
+            modelDescription="Used for summaries and titles. Auto lets Copilot pick."
+          />
         )}
 
         {isLocal && (

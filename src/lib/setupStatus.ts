@@ -13,6 +13,8 @@
 // summary is optional, cloud never nags).
 
 import { ipc, type TranscribeProvider } from "./ipc";
+import { copilotReady } from "./copilot";
+import { KEY_PROVIDERS } from "./providers";
 import { chosenCloudProvider, isCloudProvider } from "./transcribeDefault";
 import { cloudApi } from "./cloud";
 
@@ -113,16 +115,21 @@ export async function computeSetupStatus(): Promise<SetupStatus> {
   }
 
   // ---- Summary configured? (informational) --------------------------------
-  // openai → a key exists; local → a model name is set. Never gates.
+  // A keyed provider → its key exists; local → a model name is set; copilot →
+  // signed in with a CLI. Never gates.
   let summaryConfigured = false;
   if (summaryProvider === "local") {
     const model = await ipc.getSetting("local_llm_model").catch(() => null);
     summaryConfigured = !!model && model.trim().length > 0;
+  } else if (summaryProvider === "copilot") {
+    const status = await ipc.copilotStatus().catch(() => null);
+    summaryConfigured = copilotReady(status);
   } else {
-    // Default provider is openai — configured iff its key is present. (This
-    // read may duplicate the STT one above; it's cheap and keeps the branches
-    // independent.)
-    const key = await ipc.getProviderKey("openai").catch(() => null);
+    // A keyed provider is configured iff its key is present; anything else
+    // reads as the default, openai. (This read may duplicate the STT one
+    // above; it's cheap and keeps the branches independent.)
+    const keyed = KEY_PROVIDERS.find((p) => p === summaryProvider) ?? "openai";
+    const key = await ipc.getProviderKey(keyed).catch(() => null);
     summaryConfigured = !!key;
   }
 
