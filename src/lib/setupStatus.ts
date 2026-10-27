@@ -13,6 +13,7 @@
 // summary is optional, cloud never nags).
 
 import { ipc, type TranscribeProvider } from "./ipc";
+import { copilotReady } from "./copilot";
 import { chosenCloudProvider, isCloudProvider } from "./transcribeDefault";
 import { cloudApi } from "./cloud";
 
@@ -118,6 +119,9 @@ export async function computeSetupStatus(): Promise<SetupStatus> {
   if (summaryProvider === "local") {
     const model = await ipc.getSetting("local_llm_model").catch(() => null);
     summaryConfigured = !!model && model.trim().length > 0;
+  } else if (summaryProvider === "copilot") {
+    const status = await ipc.copilotStatus().catch(() => null);
+    summaryConfigured = copilotReady(status);
   } else {
     // Default provider is openai — configured iff its key is present. (This
     // read may duplicate the STT one above; it's cheap and keeps the branches

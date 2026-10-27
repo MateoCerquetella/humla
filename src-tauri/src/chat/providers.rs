@@ -280,6 +280,42 @@ impl ChatAdapter for OllamaChatAdapter {
     }
 }
 
+/// GitHub Copilot through its CLI (#227). Each step is its own session; see
+/// `copilot::session` for why that keeps the loop here.
+pub struct CopilotChatAdapter {
+    client: github_copilot_sdk::Client,
+}
+
+impl CopilotChatAdapter {
+    pub fn new(client: github_copilot_sdk::Client) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl ChatAdapter for CopilotChatAdapter {
+    fn provider_id(&self) -> &'static str {
+        "copilot"
+    }
+
+    async fn step(
+        &self,
+        ctx: ChatCtx<'_>,
+        messages: &[ChatTurn],
+        tools: &[ToolSpec],
+        on_event: &mut (dyn FnMut(ChatStreamEvent) + Send),
+    ) -> Result<ChatStep> {
+        let step = crate::copilot::session::step(&self.client, ctx.model, messages, tools, ctx.cancel, |s| {
+            on_event(ChatStreamEvent::TextDelta(s.to_string()))
+        })
+        .await?;
+        for call in &step.tool_calls {
+            on_event(ChatStreamEvent::ToolCall(call.clone()));
+        }
+        Ok(step)
+    }
+}
+
 /// Anthropic's Messages API. The base URL is a constructor argument so tests
 /// can point one at a loopback server; production always uses the cloud base.
 pub struct AnthropicChatAdapter {

@@ -20,6 +20,7 @@ describe("SummaryTab provider setting", () => {
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Cloud (OpenAI)",
       "Cloud (Anthropic)",
+      "Cloud (GitHub Copilot)",
       "Local (any OpenAI-compatible server)",
     ]);
   });
@@ -77,5 +78,31 @@ describe("SummaryTab provider setting", () => {
     render(<SummaryTab s={settings({ summary_provider: "anthropic" })} update={async () => {}} />);
     expect(await screen.findByLabelText("Anthropic API key")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "claude-sonnet-5" })).toBeInTheDocument();
+  });
+});
+
+describe("SummaryTab on GitHub Copilot", () => {
+  it("never asks for Copilot's status while another provider is selected", async () => {
+    const status = vi.fn(() => null);
+    mockTauri({ copilot_status: status });
+    render(<SummaryTab s={settings({ summary_provider: "openai" })} update={async () => {}} />);
+    await screen.findByLabelText("OpenAI API key");
+    expect(status).not.toHaveBeenCalled();
+  });
+
+  it("writes the model to copilot_model", async () => {
+    mockTauri({
+      copilot_status: () => ({ login: "octocat", cliPath: "/bin/copilot", cliVersion: "1", downloadVersion: "1" }),
+      copilot_models: () => [
+        { id: "auto", name: "Auto", vendor: null },
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5", vendor: "Anthropic" },
+      ],
+    });
+    const update = vi.fn();
+    render(<SummaryTab s={settings({ summary_provider: "copilot" })} update={update} />);
+    await userEvent.click(await screen.findByRole("combobox", { name: "Auto" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Claude Sonnet 5" }));
+    expect(update).toHaveBeenCalledWith("copilot_model", "claude-sonnet-5");
+    expect(update).not.toHaveBeenCalledWith("anthropic_model", expect.anything());
   });
 });

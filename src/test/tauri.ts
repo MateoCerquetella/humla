@@ -76,7 +76,12 @@ export function mockTauri(
         return { url: "", headers: [] };
       case "anthropic_list_models":
       case "openai_list_models":
+      case "copilot_models":
         return [];
+      case "copilot_status":
+        return { login: null, cliPath: null, cliVersion: null, downloadVersion: "0.0.0-test" };
+      case "copilot_sign_in_start":
+        return { userCode: "ABCD-1234", verificationUri: "https://github.com/login/device", expiresIn: 900 };
       // No embedding server in a test environment — the honest default is the
       // failure a real machine without one gives (#179).
       case "local_llm_embed_probe":

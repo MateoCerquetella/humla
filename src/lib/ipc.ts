@@ -4,6 +4,31 @@ import type { Provider, SummaryProvider } from "./providers";
 import type { SpeakerLabelStat } from "./speakerSuggest";
 import { targetFolderId, targetNoteId, type ChatTarget } from "./chatTarget";
 
+export type CopilotStatus = {
+  login: string | null;
+  cliPath: string | null;
+  cliVersion: string | null;
+  downloadVersion: string;
+};
+export type CopilotDeviceCode = { userCode: string; verificationUri: string; expiresIn: number };
+export type CopilotSignInEvent = {
+  status: "signed_in" | "denied" | "expired" | "failed";
+  login: string | null;
+  message: string | null;
+};
+export type CopilotCliDownloadEvent = {
+  status: "progress" | "done" | "failed";
+  fraction: number | null;
+  message: string | null;
+};
+export type CopilotModel = {
+  id: string;
+  name: string;
+  vendor: string | null;
+  /** Premium requests per call relative to the base rate; 0 is included. */
+  multiplier: number | null;
+};
+
 /** The `(noteId, folderId)` pair every chat command sends, derived in ONE place
  *  so no call site can pair a folder id with a note scope. `chatTarget.ts` imports
  *  only a type from here, so this direction of the cycle carries no runtime edge. */
@@ -150,6 +175,11 @@ export type SettingsKey =
   | "summary_model"
   // The Anthropic summary model (#183). Chat reuses `chat_model`, as OpenAI does.
   | "anthropic_model"
+  // GitHub Copilot's model for summaries and titles, and for chat (#227). Its
+  // own keys: Copilot's ids overlap OpenAI's and Anthropic's without meaning
+  // the same thing. Unset means "auto".
+  | "copilot_model"
+  | "copilot_chat_model"
   | "summary_provider"
   | "local_llm_base_url"
   | "local_llm_model"
@@ -609,6 +639,17 @@ export const ipc = {
   /** Models the stored Anthropic key can reach, newest first (#183). */
   anthropicListModels: () => invoke<string[]>("anthropic_list_models"),
 
+  /** Copilot's sign-in and CLI (#227). Reads the Keychain and may spawn a
+   *  login shell, so call it only while Copilot is the selected provider. */
+  copilotStatus: () => invoke<CopilotStatus>("copilot_status"),
+  /** Starts GitHub's device flow; the outcome arrives once on `copilot_sign_in`. */
+  copilotSignInStart: () => invoke<CopilotDeviceCode>("copilot_sign_in_start"),
+  copilotSignInCancel: () => invoke<void>("copilot_sign_in_cancel"),
+  copilotSignOut: () => invoke<void>("copilot_sign_out"),
+  /** Returns at once; progress and outcome arrive on `copilot_cli_download`. */
+  copilotCliDownload: () => invoke<void>("copilot_cli_download"),
+  copilotModels: () => invoke<CopilotModel[]>("copilot_models"),
+
   /** Chat-capable models the stored OpenAI key can reach. */
   openaiListModels: () => invoke<string[]>("openai_list_models"),
 
@@ -1051,6 +1092,12 @@ export function onLocalWhisperDownloadError(
   cb: (e: LocalWhisperDownloadError) => void,
 ): Promise<UnlistenFn> {
   return listen<LocalWhisperDownloadError>("local_whisper_download_error", (e) => cb(e.payload));
+}
+export function onCopilotSignIn(cb: (e: CopilotSignInEvent) => void): Promise<UnlistenFn> {
+  return listen<CopilotSignInEvent>("copilot_sign_in", (e) => cb(e.payload));
+}
+export function onCopilotCliDownload(cb: (e: CopilotCliDownloadEvent) => void): Promise<UnlistenFn> {
+  return listen<CopilotCliDownloadEvent>("copilot_cli_download", (e) => cb(e.payload));
 }
 export function onDiarizeDownloadProgress(cb: (e: DiarizeDownloadProgress) => void): Promise<UnlistenFn> {
   return listen<DiarizeDownloadProgress>("diarize_download_progress", (e) => cb(e.payload));

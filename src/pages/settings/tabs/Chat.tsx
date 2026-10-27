@@ -11,6 +11,8 @@ import { cloudChatHint, localChatHint } from "../../../components/provider/useCh
 import { useEmbedProbe } from "../../../components/provider/useEmbedProbe";
 import { useProviderKey } from "../../../components/provider/useProviderKey";
 import { useCloudModels } from "../../../components/provider/useCloudModels";
+import { CopilotCard } from "../../../components/provider/CopilotCard";
+import { copilotHint, useCopilotStatus } from "../../../components/provider/useCopilot";
 import { CHAT_PROVIDERS } from "../types";
 import {
   EMBEDDING_OLLAMA_MODEL,
@@ -38,11 +40,13 @@ export function modelSuitsProvider(model: string, provider: string): boolean {
 export function ChatTab({ s, update }: Pick<SettingsHook, "s" | "update">) {
   const isOllama = s.chat_provider === "ollama";
   const isAnthropic = s.chat_provider === "anthropic";
+  const isCopilot = s.chat_provider === "copilot";
   // Every hook runs unconditionally (rules of hooks); the probe parks itself
   // when chat isn't on Ollama, and the listing when no Anthropic key is stored.
-  const key = useProviderKey("openai", { enabled: !isOllama && !isAnthropic });
+  const isOpenAi = !isOllama && !isAnthropic && !isCopilot;
+  const key = useProviderKey("openai", { enabled: isOpenAi });
   const anthropicKey = useProviderKey("anthropic", { enabled: isAnthropic });
-  const isOpenAi = !isOllama && !isAnthropic;
+  const copilot = useCopilotStatus({ enabled: isCopilot });
   const openaiModels = useCloudModels("openai", key.hasKey, s.chat_model, { enabled: isOpenAi });
   const anthropicModels = useCloudModels("anthropic", anthropicKey.hasKey, s.chat_model, {
     enabled: isAnthropic,
@@ -67,6 +71,9 @@ export function ChatTab({ s, update }: Pick<SettingsHook, "s" | "update">) {
       baseUrl: s.local_llm_base_url,
       where: "above",
     });
+    ready = hint === "";
+  } else if (isCopilot) {
+    hint = copilotHint(copilot, "above");
     ready = hint === "";
   } else {
     hint = cloudChatHint({
@@ -133,6 +140,21 @@ export function ChatTab({ s, update }: Pick<SettingsHook, "s" | "update">) {
           <p className="text-xs text-[var(--color-text-muted)] py-3">
             Anthropic has no embedding model, so chat searches your notes by keyword rather than
             by meaning. Cloud (OpenAI) or a local server give semantic search as well.
+          </p>
+        </>
+      )}
+
+      {isCopilot && (
+        <>
+          <CopilotCard
+            copilot={copilot}
+            model={s.copilot_chat_model}
+            onModelChange={(v) => update("copilot_chat_model", v)}
+            modelDescription="Used for chat over your notes. Auto lets Copilot pick."
+          />
+          <p className="text-xs text-[var(--color-text-muted)] py-3">
+            GitHub Copilot has no embedding model here, so chat searches your notes by keyword
+            rather than by meaning. Cloud (OpenAI) or a local server give semantic search as well.
           </p>
         </>
       )}

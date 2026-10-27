@@ -33,6 +33,8 @@ import { Segmented } from "./pages/settings/components/Segmented";
 import { Toggle } from "./pages/settings/components/Toggle";
 import { NoteTitleBox, NoteToolbar, PanelEmpty, TranscriptEditor, TranscriptPlayer } from "./pages/Note";
 import { IntegrationsSection } from "./pages/settings/tabs/Integrations";
+import { CopilotCard } from "./components/provider/CopilotCard";
+import { useCopilotStatus } from "./components/provider/useCopilot";
 import { SendToWebhookModal } from "./pages/SendToWebhookModal";
 import { ExportModal } from "./pages/ExportModal";
 import { SaveAudioModal } from "./pages/SaveAudioModal";
@@ -436,6 +438,48 @@ function IntegrationsHarness({ mcp, webhook }: { mcp: boolean; webhook: boolean 
     webhook_enabled: String(webhook),
   } as Record<EditableKey, string>);
   return <IntegrationsSection s={s} update={(k, v) => setS((p) => ({ ...p, [k]: v }))} />;
+}
+
+// ---- #227: the Copilot card's three resting states, and the sign-in code
+// once "Sign in with GitHub" is pressed in the signed-out one.
+function copilotCase(state: "no-cli" | "signed-out" | "signed-in"): Scenario {
+  return {
+    wrap: settingsWrap,
+    render: () => <CopilotHarness />,
+    ipc: {
+      copilot_status: () => ({
+        login: state === "signed-in" ? "octocat" : null,
+        cliPath: state === "no-cli" ? null : "/Users/u/.hermes/node/lib/node_modules/@github/copilot/node_modules/@github/copilot-darwin-arm64/copilot",
+        cliVersion: state === "no-cli" ? null : "1.0.104",
+        downloadVersion: "1.0.104",
+      }),
+      copilot_sign_in_start: () => ({
+        userCode: "8C17-B75D",
+        verificationUri: "https://github.com/login/device",
+        expiresIn: 899,
+      }),
+      copilot_sign_in_cancel: () => undefined,
+      copilot_cli_download: () => undefined,
+      copilot_models: () => [
+        { id: "auto", name: "Auto", vendor: null },
+        { id: "claude-sonnet-5.5", name: "Claude Sonnet 5.5", vendor: "Anthropic" },
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", vendor: "OpenAI" },
+      ],
+    },
+  };
+}
+
+function CopilotHarness() {
+  const copilot = useCopilotStatus({ enabled: true });
+  const [model, setModel] = useState("auto");
+  return (
+    <CopilotCard
+      copilot={copilot}
+      model={model}
+      onModelChange={setModel}
+      modelDescription="Used for summaries and titles."
+    />
+  );
 }
 
 // ---- #213: the confirmation before a note is sent. What needs eyes is the
@@ -1260,6 +1304,9 @@ const CASES: Record<string, Scenario> = {
 
   // --- #213: the webhook rows with a saved endpoint, and the send's confirmation.
   "webhook-settings": integrationsCase(false, true),
+  "copilot-no-cli": copilotCase("no-cli"),
+  "copilot-signed-out": copilotCase("signed-out"),
+  "copilot-signed-in": copilotCase("signed-in"),
   "webhook-send": webhookSendCase("hooks.example.com"),
   "webhook-send-unset": webhookSendCase(null),
   export: exportCase(),

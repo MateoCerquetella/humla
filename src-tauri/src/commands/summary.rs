@@ -30,6 +30,9 @@ pub(super) struct ResolvedProvider {
     // chain-of-thought). Default off; flipping it on lets users A/B the
     // quality difference in dev. Ignored for cloud + non-Ollama servers.
     pub(super) think: bool,
+    /// The running Copilot CLI, which the caller attaches after resolving —
+    /// starting it is async and resolving is not.
+    pub(super) copilot: Option<github_copilot_sdk::Client>,
 }
 
 /// Which client a resolved provider is called through. One answer, so a caller
@@ -37,6 +40,7 @@ pub(super) struct ResolvedProvider {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Dispatch {
     Anthropic,
+    Copilot,
     OpenAiCompatible,
 }
 
@@ -44,6 +48,7 @@ impl ResolvedProvider {
     pub(super) fn dispatch(&self) -> Dispatch {
         match self.provider {
             ProviderId::Anthropic => Dispatch::Anthropic,
+            ProviderId::Copilot => Dispatch::Copilot,
             _ => Dispatch::OpenAiCompatible,
         }
     }
@@ -64,6 +69,14 @@ impl ResolvedProvider {
                 anthropic::summarize(&self.api_key, &self.model, system_prompt, user_message, on_chunk)
                     .await
             }
+            Dispatch::Copilot => {
+                let client = self
+                    .copilot
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("the Copilot CLI isn't running"))?;
+                crate::copilot::session::complete(client, &self.model, system_prompt, user_message, on_chunk)
+                    .await
+            }
             Dispatch::OpenAiCompatible => {
                 openai::summarize_with_base(
                     &self.base_url,
@@ -78,6 +91,18 @@ impl ResolvedProvider {
             }
         }
     }
+}
+
+/// Start the Copilot CLI for a provider that resolved to Copilot; any other
+/// provider is left as it is.
+pub(super) async fn attach_copilot(app: &AppHandle, p: &mut ResolvedProvider) -> anyhow::Result<()> {
+    if p.provider != ProviderId::Copilot {
+        return Ok(());
+    }
+    let state: State<AppState> = app.state();
+    let app_data = app.path().app_data_dir()?;
+    p.copilot = Some(state.copilot.ready_client(&state.keychain_cache, &app_data).await?);
+    Ok(())
 }
 
 // Decide whether this note's summary call should hit cloud OpenAI or a
@@ -142,6 +167,7 @@ pub(super) fn resolve_provider(
                 api_key: "humla-local".into(),
                 model,
                 think,
+                copilot: None,
             })
         }
         ProviderId::OpenAi => {
@@ -157,6 +183,7 @@ pub(super) fn resolve_provider(
                 api_key,
                 model,
                 think: false,
+                copilot: None,
             })
         }
         ProviderId::Anthropic => {
@@ -174,6 +201,22 @@ pub(super) fn resolve_provider(
                 api_key,
                 model,
                 think: false,
+                copilot: None,
+            })
+        }
+        ProviderId::Copilot => {
+            let model = db::get_setting(conn, "copilot_model")?
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| crate::copilot::DEFAULT_MODEL.to_string());
+            eprintln!("[llm] resolved copilot: model={model}");
+            Ok(ResolvedProvider {
+                provider: id,
+                base_url: String::new(),
+                api_key: String::new(),
+                model,
+                think: false,
+                copilot: None,
             })
         }
         ProviderId::Deepgram | ProviderId::Groq => unreachable!("filtered on the summarize capability"),
@@ -290,9 +333,11 @@ async fn run_summary(app: AppHandle, note_id: String) -> anyhow::Result<()> {
         let p_resolved = resolve_provider(&conn, &n, api_key)?;
         (p_resolved, note_language(&conn, &n)?, n)
     };
+    let mut provider = provider;
     if note.transcript.trim().is_empty() && note.body.trim().is_empty() {
         return Ok(());
     }
+    attach_copilot(&app, &mut provider).await?;
     let prompt = {
         let conn = state.db.lock();
         resolve_prompt(&conn, &note, &language)
@@ -552,6 +597,29 @@ mod tests {
         let note = db::create_note(&conn, "no", "meeting", "").unwrap();
         let err = resolve_provider(&conn, &note, None).err().unwrap().to_string();
         assert!(err.contains("Anthropic API key"), "{err}");
+    }
+
+    #[test]
+    fn copilot_needs_no_key_and_lets_copilot_pick_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open(&dir.path().join("t.sqlite")).unwrap();
+        db::set_setting(&conn, "summary_provider", "copilot").unwrap();
+        let note = db::create_note(&conn, "no", "meeting", "").unwrap();
+        let p = resolve_provider(&conn, &note, None).unwrap();
+        assert_eq!(p.provider, ProviderId::Copilot);
+        assert_eq!(p.dispatch(), Dispatch::Copilot);
+        assert_eq!(p.model, "auto");
+    }
+
+    #[test]
+    fn the_copilot_model_setting_wins_over_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open(&dir.path().join("t.sqlite")).unwrap();
+        db::set_setting(&conn, "summary_provider", "copilot").unwrap();
+        db::set_setting(&conn, "copilot_model", "claude-sonnet-5.5").unwrap();
+        db::set_setting(&conn, "anthropic_model", "claude-opus-5").unwrap();
+        let note = db::create_note(&conn, "no", "meeting", "").unwrap();
+        assert_eq!(resolve_provider(&conn, &note, None).unwrap().model, "claude-sonnet-5.5");
     }
 
     #[test]

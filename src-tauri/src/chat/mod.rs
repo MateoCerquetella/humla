@@ -4,13 +4,13 @@
 //! + streaming together. The `#[tauri::command]` wrappers live in
 //! `commands::chat`; everything here is Tauri-free so it's unit-testable.
 
-mod adapter;
+pub(crate) mod adapter;
 pub mod cloud;
 mod providers;
 mod tools;
 
 pub use adapter::{CancelFlag, ChatAdapter, ChatCtx, ChatStreamEvent, ChatTurn, ToolSpec};
-pub use providers::{AnthropicChatAdapter, OllamaChatAdapter, OpenAiChatAdapter};
+pub use providers::{AnthropicChatAdapter, CopilotChatAdapter, OllamaChatAdapter, OpenAiChatAdapter};
 
 /// A stand-in OpenAI-compat server, shared by every test here that needs one on
 /// the wire rather than behind a fake adapter.
@@ -555,6 +555,9 @@ pub fn build_chat_adapter(provider: ProviderId) -> Result<Box<dyn ChatAdapter>> 
         ProviderId::Local => Ok(Box::new(OllamaChatAdapter)),
         ProviderId::OpenAi => Ok(Box::new(OpenAiChatAdapter)),
         ProviderId::Anthropic => Ok(Box::new(AnthropicChatAdapter::new())),
+        ProviderId::Copilot => {
+            anyhow::bail!("Copilot chat runs on a started CLI; build CopilotChatAdapter::new instead")
+        }
         ProviderId::Deepgram | ProviderId::Groq => {
             anyhow::bail!("{provider} is a transcription provider and can't chat")
         }
