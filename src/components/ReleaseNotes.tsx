@@ -50,6 +50,7 @@ const VISUAL_CAPTION: Record<NonNullable<Release["visual"]>, string> = {
   "two-factor": "Sign in with a code from your phone.",
   date: "Set when a meeting happened.",
   audio: "Save a meeting’s recording.",
+  copilot: "Use the Copilot subscription you already have.",
 };
 
 function ReleaseVisual({ kind }: { kind: NonNullable<Release["visual"]> }) {
@@ -124,6 +125,15 @@ function ReleaseVisual({ kind }: { kind: NonNullable<Release["visual"]> }) {
           </ul>
           <div className="release-preview-formats"><span className="is-selected">M4A</span><span>WAV</span></div>
           <div className="release-preview-sent"><FileAudio size={14} strokeWidth={1.8} />weekly-planning.m4a</div>
+        </>}
+        {kind === "copilot" && <>
+          <div className="release-demo-heading"><span>GitHub Copilot</span></div>
+          <ul className="release-preview-takes">
+            <li><span>Copilot CLI</span><span>Installed</span></li>
+            <li><span>GitHub account</span><span>Signed in as octocat</span></li>
+            <li className="is-total"><span>Model</span><span>Claude Sonnet 5.5</span></li>
+          </ul>
+          <div className="release-preview-sent"><CircleCheck size={14} strokeWidth={1.8} />Summary written with your Copilot subscription</div>
         </>}
         {kind === "two-factor" && <>
           <div className="release-demo-heading"><span>Two-factor authentication</span></div>

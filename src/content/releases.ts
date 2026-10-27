@@ -3,13 +3,33 @@ export type Release = {
   date: string;
   title: string;
   summary: string;
-  visual?: "filters" | "privacy" | "activity" | "updates" | "speakers" | "webhook" | "export" | "two-factor" | "date" | "audio";
+  visual?: "filters" | "privacy" | "activity" | "updates" | "speakers" | "webhook" | "export" | "two-factor" | "date" | "audio" | "copilot";
   paragraphs: string[];
   highlights: string[];
   issues: { title: string; reference: string; status: "Open" | "Closed"; url: string }[];
 };
 
 export const releases: Release[] = [
+  {
+    version: "0.72.0",
+    date: "2026-10-27",
+    title: "Use your GitHub Copilot",
+    summary: "Summaries and chat on the Copilot subscription you already have, no API key needed.",
+    visual: "copilot",
+    paragraphs: [
+      "GitHub Copilot is now a provider for summaries, titles and chat over your notes. Pick it under Settings → Summary or Settings → Chat, sign in with GitHub by entering a short code, and choose a model. You get the models your Copilot plan includes, such as Claude and GPT, and the calls count against your Copilot plan instead of an API key.",
+      "Humla reaches Copilot through GitHub's Copilot CLI. If it's already on your Mac, Humla finds it; if not, Settings downloads it for you (about 120 MB). Chat on Copilot searches your notes by keyword, as it does on Anthropic.",
+      "Also fixed: chat on some newer OpenAI models, such as GPT-6.1 Sol, failed with an error about reasoning_effort. It works again.",
+    ],
+    highlights: [
+      "Pick GitHub Copilot for summaries and chat.",
+      "Sign in with GitHub, no API key to paste.",
+      "Choose from the models your Copilot plan includes.",
+    ],
+    issues: [
+      { title: "GitHub Copilot", reference: "#227", status: "Closed", url: "https://github.com/michaelwilhelmsen/humla/issues/227" },
+    ],
+  },
   {
     version: "0.71.0",
     date: "2026-10-24",
