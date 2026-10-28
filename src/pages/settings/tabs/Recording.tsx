@@ -5,6 +5,7 @@ import { formatBytes, s as plural } from "../components/format";
 import { HotkeyField } from "../components/HotkeyField";
 import { LaunchAtLoginField } from "../components/LaunchAtLoginField";
 import { Row, Section } from "../components/Section";
+import { Segmented } from "../components/Segmented";
 import { Toggle } from "../components/Toggle";
 import type { SettingsHook } from "../useSettings";
 
@@ -18,6 +19,7 @@ export function RecordingSection({
   const manualTranscription = s.transcribe_manually === "true";
   const closeToTray = s.close_to_tray === "true";
   const keepAwake = s.keep_awake !== "false";
+  const meetingWatch = s.meeting_watch as "off" | "notify" | "record";
   return (
     <>
       <Section title="Permissions">
@@ -114,6 +116,31 @@ export function RecordingSection({
           label="Record shortcut"
           description="Starts and stops a recording from any app. With a note open it records that note; otherwise it starts a new one."
           control={<HotkeyField />}
+        />
+      </Section>
+
+      <Section title="Meetings">
+        <Row
+          label="When a meeting starts"
+          description={
+            meetingWatch === "off"
+              ? "Humla stays quiet. Detect when another app starts using the microphone and offer to record."
+              : meetingWatch === "record"
+                ? "Humla starts recording on its own once a call has held the microphone for about ten seconds. Stop it with the record shortcut or from the menu bar."
+                : "A notification tells you a call has started; nothing is recorded until you press the record shortcut."
+          }
+          control={
+            <Segmented
+              label="When a meeting starts"
+              value={meetingWatch}
+              onChange={(next) => update("meeting_watch", next)}
+              options={[
+                { value: "off", label: "Off" },
+                { value: "notify", label: "Notify" },
+                { value: "record", label: "Auto-record" },
+              ]}
+            />
+          }
         />
       </Section>
     </>

@@ -13,6 +13,7 @@ mod presets;
 mod wav;
 mod recording;
 mod menubar;
+mod meeting_watch;
 mod sessions;
 mod commands;
 mod stt;
@@ -324,6 +325,9 @@ where
                 }
             };
             menubar::present_at_launch(app.handle(), tray_installed);
+
+            // Meeting detection: off until Settings turns it on.
+            meeting_watch::spawn(app.handle().clone());
 
             Ok(())
         })

@@ -169,6 +169,10 @@ export type SettingsKey =
   | "transcribe_manually"
   // Hold a system-sleep power assertion while a capture runs (#180).
   | "keep_awake"
+  // Meeting detection: `off` (default), `notify` or `record`. Watches which
+  // process holds the microphone, so it works for Meet, Zoom, Slack huddles and
+  // FaceTime alike, with no per-app configuration.
+  | "meeting_watch"
   // Cloud/teams: upload a finished recording's audio to its workspace note
   // so teammates can play it back. Default on; only the string "false"
   // disables it on the upload path. Surfaced in the Account section.

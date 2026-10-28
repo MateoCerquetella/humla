@@ -642,7 +642,7 @@ pub fn toggle_recording(app: &AppHandle) {
     });
 }
 
-async fn headless_start(app: &AppHandle) {
+pub(crate) async fn headless_start(app: &AppHandle) {
     let note = match create_headless_note(app) {
         Ok(note) => note,
         Err(e) => {
@@ -799,7 +799,7 @@ pub fn on_phase(app: &AppHandle, phase: Phase) {
 }
 
 /// Is a capture occupying the single recording slot right now?
-fn capture_in_flight(app: &AppHandle) -> bool {
+pub(crate) fn capture_in_flight(app: &AppHandle) -> bool {
     app.try_state::<AppState>()
         .map(|s| s.recording.lock().note_id.is_some())
         .unwrap_or(false)
@@ -815,7 +815,7 @@ fn note_title(app: &AppHandle, note_id: &str) -> String {
     }
 }
 
-fn notify(app: &AppHandle, title: &str, body: &str) {
+pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         eprintln!("[menubar] notification failed: {e}");
     }
