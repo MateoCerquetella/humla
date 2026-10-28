@@ -1,26 +1,45 @@
 import { listen } from "@tauri-apps/api/event";
-import { Pause, Play, Square } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  getCurrentWindow,
+  LogicalPosition,
+  LogicalSize,
+} from "@tauri-apps/api/window";
+import { ChevronDown, ChevronUp, Pause, Play, Square } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatTime } from "../lib/captureClock";
-import { ipc, type RecordingStatus } from "../lib/ipc";
+import {
+  ipc,
+  type RecordingStatus,
+  type TranscriptEvent,
+} from "../lib/ipc";
 
-// The floating bar's own view: the same recording as the window, reduced to the
-// three things worth seeing from another app — that it is running, for how
-// long, and how to stop it.
+// The floating bar's own view: the same recording as the window, reduced to
+// what is worth seeing from another app — that it is running, for how long,
+// the last thing that was said, and how to stop it.
 //
-// Phase is read from `recording_status` rather than from the store, because
-// this window mounts on its own and never runs `bindBackendListeners`.
+// Phase and transcript are read from backend events rather than the store,
+// because this window mounts on its own and never runs `bindBackendListeners`.
+const EXPANDED = { width: 360, height: 140 };
+const COLLAPSED = { width: 186, height: 60 };
+
+// How much of the transcript the bar keeps. Two lines at this width is ~180
+// characters; a little more is kept so a resize doesn't cut mid-sentence.
+const CAPTION_CHARS = 300;
+
 export function FloatBar() {
   const [phase, setPhase] = useState<RecordingStatus["phase"]>("recording");
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [caption, setCaption] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const sized = useRef<string | null>(null);
 
   useEffect(() => {
     // Transparent window: the panel paints itself, the page behind it must not.
     document.documentElement.style.background = "transparent";
     document.body.style.background = "transparent";
 
-    let stop: (() => void) | undefined;
+    let stop: (() => void)[] = [];
     let cancelled = false;
 
     void ipc.recordingElapsedMs().then((ms) => {
@@ -29,21 +48,58 @@ export function FloatBar() {
 
     void listen<RecordingStatus>("recording_status", (event) => {
       setPhase(event.payload.phase);
-      // A stop ends the clock; nothing renders past it, but freezing here keeps
-      // the last frame honest if the window hasn't hidden yet.
       if (event.payload.phase === "recording") {
         void ipc.recordingElapsedMs().then((ms) => setElapsedMs(ms));
       }
     }).then((unlisten) => {
       if (cancelled) unlisten();
-      else stop = unlisten;
+      else stop.push(unlisten);
+    });
+
+    // Live transcript: each chunk replaces the note's whole text, so the tail
+    // of the latest replacement is the most recent speech.
+    void listen<TranscriptEvent>("transcript_replaced", (event) => {
+      const text = event.payload.text.trim();
+      setCaption(text.slice(-CAPTION_CHARS));
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else stop.push(unlisten);
     });
 
     return () => {
       cancelled = true;
-      stop?.();
+      for (const un of stop) un();
     };
   }, []);
+
+  // The window is sized to its content: a transparent frame larger than the
+  // pill would still swallow clicks meant for the app behind it.
+  useEffect(() => {
+    const next = collapsed ? COLLAPSED : EXPANDED;
+    const key = `${next.width}x${next.height}`;
+    if (sized.current === key) return;
+    sized.current = key;
+
+    void (async () => {
+      const win = getCurrentWindow();
+      try {
+        const scale = await win.scaleFactor();
+        const size = (await win.outerSize()).toLogical(scale);
+        const pos = (await win.outerPosition()).toLogical(scale);
+        await win.setSize(new LogicalSize(next.width, next.height));
+        // Keep the bar's bottom edge and horizontal centre fixed, so growing
+        // for the transcript pushes the panel up instead of off-screen.
+        await win.setPosition(
+          new LogicalPosition(
+            pos.x + (size.width - next.width) / 2,
+            pos.y + (size.height - next.height),
+          ),
+        );
+      } catch (e) {
+        console.error("floatbar resize failed", e);
+      }
+    })();
+  }, [collapsed]);
 
   useEffect(() => {
     if (phase !== "recording") return;
@@ -64,46 +120,70 @@ export function FloatBar() {
   };
 
   return (
-    <div
-      data-tauri-drag-region
-      className="h-16 w-[340px] px-2 py-2 select-none"
-    >
+    <div className="h-full w-full p-2 select-none">
       <div
         data-tauri-drag-region
-        className="flex h-full items-center gap-3 rounded-2xl border border-[var(--color-line-visible)] bg-[var(--color-surface)] px-4 shadow-xl"
+        className="flex h-full flex-col overflow-hidden rounded-2xl border border-[var(--color-line-visible)] bg-[var(--color-surface)] shadow-xl"
       >
-        <span
-          className={
-            "inline-block h-2.5 w-2.5 shrink-0 rounded-full " +
-            (paused
-              ? "bg-[var(--color-warning)]"
-              : "animate-pulse bg-[var(--color-accent)]")
-          }
-        />
-        <span
+        <div
           data-tauri-drag-region
-          className="font-mono text-sm tabular-nums text-[var(--color-text)]"
+          className="flex h-14 shrink-0 items-center gap-3 px-4"
         >
-          {paused ? "Paused" : formatTime(Math.floor(elapsedMs / 1000))}
-        </span>
-        <div className="ml-auto flex items-center gap-1.5">
-          <BarButton
-            label={paused ? "Resume recording" : "Pause recording"}
-            disabled={busy}
-            onClick={() =>
-              run(paused ? ipc.recordingResume : ipc.recordingPause)
+          <span
+            className={
+              "inline-block h-2.5 w-2.5 shrink-0 rounded-full " +
+              (paused
+                ? "bg-[var(--color-warning)]"
+                : "animate-pulse bg-[var(--color-accent)]")
             }
+          />
+          <span
+            data-tauri-drag-region
+            className="font-mono text-sm tabular-nums text-[var(--color-text)]"
           >
-            {paused ? <Play size={14} /> : <Pause size={14} />}
-          </BarButton>
-          <BarButton
-            label="Stop recording"
-            disabled={busy}
-            onClick={() => run(ipc.recordingStop)}
-          >
-            <Square size={11} fill="currentColor" />
-          </BarButton>
+            {paused ? "Paused" : formatTime(Math.floor(elapsedMs / 1000))}
+          </span>
+
+          <div className="ml-auto flex items-center gap-1.5">
+            <BarButton
+              label={collapsed ? "Expand" : "Minimise to a pill"}
+              onClick={() => setCollapsed((c) => !c)}
+            >
+              {collapsed ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            </BarButton>
+            {!collapsed && (
+              <BarButton
+                label={paused ? "Resume recording" : "Pause recording"}
+                disabled={busy}
+                onClick={() => run(paused ? ipc.recordingResume : ipc.recordingPause)}
+              >
+                {paused ? <Play size={14} /> : <Pause size={14} />}
+              </BarButton>
+            )}
+            <BarButton
+              label="Stop recording"
+              disabled={busy}
+              onClick={() => run(ipc.recordingStop)}
+            >
+              <Square size={11} fill="currentColor" />
+            </BarButton>
+          </div>
         </div>
+
+        {!collapsed && (
+          <div className="min-h-0 flex-1 border-t border-[var(--color-line-visible)] px-4 py-2">
+            <p
+              className={
+                "line-clamp-2 text-xs leading-relaxed " +
+                (caption
+                  ? "text-[var(--color-text-muted)]"
+                  : "italic text-[var(--color-text-disabled)]")
+              }
+            >
+              {caption || (paused ? "Paused" : "Listening…")}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -116,7 +196,7 @@ function BarButton({
   children,
 }: {
   label: string;
-  disabled: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: ReactNode;
 }) {

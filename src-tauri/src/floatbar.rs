@@ -61,6 +61,6 @@ fn place_once(window: &WebviewWindow) {
     let origin = monitor.position();
     let width = window.outer_size().map(|s| s.width).unwrap_or(360);
     let x = origin.x + (screen.width as i32 - width as i32) / 2;
-    let y = origin.y + screen.height as i32 - 132;
+    let y = origin.y + screen.height as i32 - 156;
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }

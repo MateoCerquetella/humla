@@ -1,11 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "floatbar",
-  "description": "Floating recording bar: drag to move, listen for recording status",
+  "description": "Floating recording bar: drag to move, resize between pill and panel, listen for recording status and transcript",
   "windows": ["floatbar"],
   "permissions": [
     "core:default",
     "core:event:default",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "core:window:allow-scale-factor",
+    "core:window:allow-outer-size",
+    "core:window:allow-outer-position",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position"
   ]
 }
