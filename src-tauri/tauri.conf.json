@@ -20,14 +20,34 @@
         "visible": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 18, "y": 24 }
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 24
+        }
+      },
+      {
+        "label": "floatbar",
+        "title": "Humla",
+        "url": "/?window=floatbar",
+        "width": 340,
+        "height": 64,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/recordings/**"]
+        "scope": [
+          "$APPDATA/recordings/**"
+        ]
       }
     },
     "macOSPrivateApi": true
@@ -35,14 +55,23 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
-    "targets": ["app", "dmg"],
-    "icon": ["icons/icon.png"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
     "macOS": {
       "minimumSystemVersion": "13.0",
       "entitlements": "entitlements.plist",
       "signingIdentity": "Developer ID Application: MICHAEL MEHLUM WILHELMSEN (NBUP88JQ35)"
     },
-    "externalBin": ["binaries/audio-capture", "binaries/speaker-diarize", "binaries/humla-mcp"],
+    "externalBin": [
+      "binaries/audio-capture",
+      "binaries/speaker-diarize",
+      "binaries/humla-mcp"
+    ],
     "resources": {
       "resources/default.metallib": "default.metallib"
     }

@@ -761,6 +761,7 @@ pub fn is_replaceable_title(title: &str) -> bool {
 /// Reflect a recording phase in the tray, and close the loop on a headless
 /// recording once its post-stop chain has finished.
 pub fn on_phase(app: &AppHandle, phase: Phase) {
+    crate::floatbar::sync(app, phase);
     let Some(mb) = app.try_state::<MenuBar>() else { return };
     *mb.phase.lock() = phase;
     let want = tray_menu_state(phase);

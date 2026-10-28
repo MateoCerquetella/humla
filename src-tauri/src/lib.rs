@@ -14,6 +14,7 @@ mod wav;
 mod recording;
 mod menubar;
 mod meeting_watch;
+mod floatbar;
 mod sessions;
 mod commands;
 mod stt;
@@ -455,6 +456,7 @@ where
             commands::recording_pause,
             commands::recording_resume,
             commands::recording_state,
+            commands::recording_elapsed_ms,
             commands::summarize_note,
             commands::transcribe_note,
             commands::note_generate_title,

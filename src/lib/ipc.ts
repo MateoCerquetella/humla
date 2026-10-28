@@ -173,6 +173,8 @@ export type SettingsKey =
   // process holds the microphone, so it works for Meet, Zoom, Slack huddles and
   // FaceTime alike, with no per-app configuration.
   | "meeting_watch"
+  // Floating recording bar: `true` (default) or `false`.
+  | "floating_bar"
   // Cloud/teams: upload a finished recording's audio to its workspace note
   // so teammates can play it back. Default on; only the string "false"
   // disables it on the upload path. Surfaced in the Account section.
@@ -679,6 +681,10 @@ export const ipc = {
   // capture slot until it lands on idle (#182) — so it is a third answer to
   // "can a capture start", not a variant of either other one.
   recordingState: () => invoke<"idle" | "recording" | "stopping">("recording_state"),
+  // Live capture length in ms, measured from the session's own start stamp so
+  // the floating bar opens with the meeting's real clock, not one that starts
+  // at zero when the window appears.
+  recordingElapsedMs: () => invoke<number>("recording_elapsed_ms"),
   summarizeNote: (noteId: string) => invoke<void>("summarize_note", { noteId }),
   // Regenerate a note's title from its content (#90). Resolves to the new title,
   // or null when the model gave back nothing usable — in which case the existing

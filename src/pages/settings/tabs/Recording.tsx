@@ -20,6 +20,7 @@ export function RecordingSection({
   const closeToTray = s.close_to_tray === "true";
   const keepAwake = s.keep_awake !== "false";
   const meetingWatch = s.meeting_watch as "off" | "notify" | "record";
+  const floatingBar = s.floating_bar !== "false";
   return (
     <>
       <Section title="Permissions">
@@ -139,6 +140,21 @@ export function RecordingSection({
                 { value: "notify", label: "Notify" },
                 { value: "record", label: "Auto-record" },
               ]}
+            />
+          }
+        />
+        <Row
+          label="Floating bar"
+          description={
+            floatingBar
+              ? "A small always-on-top bar keeps the timer, pause and stop in view while you are in another app. Drag it wherever it is out of the way."
+              : "Only the menu-bar icon shows that a recording is running."
+          }
+          control={
+            <Toggle
+              label="Floating bar"
+              checked={floatingBar}
+              onChange={(on) => update("floating_bar", on ? "true" : "false")}
             />
           }
         />

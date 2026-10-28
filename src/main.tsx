@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import { FloatBar } from "./pages/FloatBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { applyCachedPalette } from "./lib/palette";
 // Every typeface a theme can ask for, self-hosted via @fontsource — no external
@@ -27,12 +28,22 @@ import "./styles/globals.css";
 // picked. See applyCachedPalette().
 applyCachedPalette();
 
+// The floating recording bar is a second window of the same app, loading the
+// same bundle with a marker in the query string so the router and the main
+// shell never mount for it.
+const isFloatBar =
+  new URLSearchParams(window.location.search).get("window") === "floatbar";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      {isFloatBar ? (
+        <FloatBar />
+      ) : (
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      )}
     </ErrorBoundary>
   </React.StrictMode>
 );

@@ -44,6 +44,7 @@ export const DEFAULTS: Record<EditableKey, string> = {
   transcribe_manually: "false",
   keep_awake: "true",
   meeting_watch: "off",
+  floating_bar: "true",
   close_to_tray: "false",
   sync_audio: "true",
   custom_vocabulary: "",

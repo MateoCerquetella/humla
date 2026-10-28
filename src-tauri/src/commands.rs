@@ -2529,6 +2529,23 @@ pub fn recording_state(state: State<AppState>) -> Result<&'static str, String> {
     Ok(if s.note_id.is_some() { "recording" } else { "idle" })
 }
 
+/// Wall-clock length of the live capture, for the floating bar's clock.
+///
+/// Read from the session's own start stamp rather than counted in the webview,
+/// so the bar shows the meeting's length the moment it opens — including a
+/// capture that started while no window existed. Pauses are not subtracted: the
+/// bar answers "how long has this call been running", not how much was billable.
+#[tauri::command]
+pub fn recording_elapsed_ms(state: State<AppState>) -> u64 {
+    let started_at = state.recording.lock().session_started_at.clone();
+    let Some(started_at) = started_at else { return 0 };
+    let Ok(started) = chrono::DateTime::parse_from_rfc3339(&started_at) else { return 0 };
+    (chrono::Utc::now() - started.with_timezone(&chrono::Utc))
+        .num_milliseconds()
+        .max(0) as u64
+}
+
+
 #[tauri::command]
 pub async fn recording_start(
     app: AppHandle,
